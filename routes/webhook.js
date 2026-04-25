@@ -39,12 +39,12 @@ router.post("/razorpay", express.raw({ type: "application/json" }), async (req, 
     }
     await recordPayment(order_id, payment_id, entity.amount);
     console.log("BOOKING CONFIRMED via webhook:", order_id, "| user:", phone);
-    notifyUser(phone, `Your TOVA ride is confirmed! Order: ${order_id}. See you at the stop.`);
+    await notifyUser(phone, `Your TOVA ride is confirmed! Order: ${order_id}. See you at the stop.`);
 
   } else if (event.event === "payment.failed") {
     await failBooking(order_id);
     console.log("PAYMENT FAILED:", order_id);
-    notifyUser(phone, `Payment failed for order ${order_id}. Please try again.`);
+    await notifyUser(phone, `Payment failed for order ${order_id}. Please try again.`);
   }
 
   return res.status(200).json({ status: "ok" });

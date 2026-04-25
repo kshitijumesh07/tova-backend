@@ -83,7 +83,7 @@ async function recordPayment(orderId, razorpayPaymentId, amount) {
     where:  { razorpayOrderId: orderId },
     update: { razorpayPaymentId, status: "CAPTURED" },
     create: {
-      razorpayOrderId,
+      razorpayOrderId:   orderId,
       razorpayPaymentId,
       bookingId: booking.id,
       amount:    amount || booking.amount,

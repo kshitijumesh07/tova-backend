@@ -27,7 +27,11 @@ router.post("/verify", async (req, res) => {
     return res.status(409).json({ success: false, reason: result.error });
   }
 
-  await recordPayment(razorpay_order_id, razorpay_payment_id, null);
+  try {
+    await recordPayment(razorpay_order_id, razorpay_payment_id, null);
+  } catch (err) {
+    console.error("[verify] recordPayment failed (non-fatal):", err.message);
+  }
 
   const booking = await getBookingByOrderId(razorpay_order_id);
   console.log("[verify] booking.phone:", booking?.phone, "| tripId:", booking?.tripId);
