@@ -1,21 +1,20 @@
 const express = require("express");
-const { matchRides } = require("../services/matching");
-const { notifyUser } = require("../services/notify");
+const { matchRides }                    = require("../services/matching");
+const { notifyUser }                    = require("../services/notify");
+const { getSession, setSession, clearSession } = require("../services/session");
 
 const router = express.Router();
 
-const sessions = {};
-
 function formatRides(rides) {
   return rides
-    .map((r, i) => `${i + 1}. ${r.time} | ₹${r.price} | ${r.seats} seats`)
+    .map((r, i) => `${i + 1}. ${r.time} | ₹${r.price} | ${r.seats} seat(s)`)
     .join("\n");
 }
 
 // Meta webhook verification
 router.get("/incoming", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
+  const mode      = req.query["hub.mode"];
+  const token     = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
@@ -30,15 +29,15 @@ router.post("/incoming", async (req, res) => {
   // Acknowledge immediately so Meta doesn't retry
   res.status(200).send("OK");
 
-  const entry = req.body?.entry?.[0];
+  const entry  = req.body?.entry?.[0];
   const change = entry?.changes?.[0]?.value;
-  const msg = change?.messages?.[0];
+  const msg    = change?.messages?.[0];
 
   if (!msg || (msg.type !== "text" && msg.type !== "location")) return;
 
-  const phone = msg.from; // e.g. "919390537737"
+  const phone = msg.from;
 
-  let text = "";
+  let text         = "";
   let locationMeta = null;
 
   if (msg.type === "location") {
@@ -49,7 +48,6 @@ router.post("/incoming", async (req, res) => {
       name:      loc.name    || null,
       address:   loc.address || null,
     };
-    // Build a human-readable label for the session
     text = loc.name || loc.address || `${loc.latitude},${loc.longitude}`;
   } else {
     text = (msg.text?.body || "").trim();
@@ -57,24 +55,24 @@ router.post("/incoming", async (req, res) => {
 
   const lower = text.toLowerCase();
 
-  console.log("WA INCOMING:", phone, "|", text);
+  console.log("WA INCOMING:", phone, "|", msg.type, "|", text);
 
-  if (!sessions[phone]) sessions[phone] = { step: "START" };
-  const session = sessions[phone];
+  const session = await getSession(phone);
 
   let reply;
 
   if (lower === "hi" || lower === "hello") {
-    sessions[phone] = { step: "AWAITING_PICKUP" };
+    await setSession(phone, { step: "AWAITING_PICKUP" });
     reply = "Welcome to TOVA!\nEnter your pickup location:";
 
   } else if (session.step === "AWAITING_PICKUP") {
     if (!text) {
       reply = "Please enter a valid pickup location.";
     } else {
-      session.pickup = text;
+      session.pickup     = text;
+      session.step       = "AWAITING_DESTINATION";
       if (locationMeta) session.pickupCoords = locationMeta;
-      session.step = "AWAITING_DESTINATION";
+      await setSession(phone, session);
       reply = "Enter your destination:";
     }
 
@@ -83,8 +81,9 @@ router.post("/incoming", async (req, res) => {
       reply = "Please enter a valid destination.";
     } else {
       session.destination = text;
+      session.step        = "AWAITING_TIME";
       if (locationMeta) session.destinationCoords = locationMeta;
-      session.step = "AWAITING_TIME";
+      await setSession(phone, session);
       reply = "Enter preferred time (e.g. 8:00 AM or 6:00 PM):";
     }
 
@@ -96,12 +95,13 @@ router.post("/incoming", async (req, res) => {
       const result = await matchRides(session.pickup, session.destination, session.time);
 
       if (result.length === 0) {
-        sessions[phone] = { step: "START" };
-        reply = "No rides found for that time. Type 'hi' to start over.";
+        await clearSession(phone);
+        reply = "No rides available for that route and time. Type 'hi' to start over.";
       } else {
         session.foundRides = result;
-        session.step = "SELECTING_RIDE";
-        reply = `Available rides:\n${formatRides(result)}\nReply with number to select:`;
+        session.step       = "SELECTING_RIDE";
+        await setSession(phone, session);
+        reply = `Available rides:\n${formatRides(result)}\nReply with a number to select:`;
       }
     }
 
@@ -111,8 +111,7 @@ router.post("/incoming", async (req, res) => {
       reply = `Invalid choice. Reply with a number between 1 and ${session.foundRides?.length ?? 1}.`;
     } else {
       const ride = session.foundRides[idx];
-      session.step = "START";
-      session.selectedTripId = ride.id;
+      await clearSession(phone);
       const link = `https://tova-web.vercel.app/checkout?ride=${ride.id}&user=${encodeURIComponent("+" + phone)}`;
       reply = `Ride selected: ${ride.time} | ₹${ride.price} | ${ride.seats} seat(s) left\nTap to pay:\n${link}`;
     }
