@@ -3,11 +3,20 @@ const path = require("path");
 
 const DB_PATH = path.resolve(__dirname, "../data/drivers.json");
 
+// Default drivers used when data/drivers.json doesn't exist (e.g. Railway cold deploy)
+const DEFAULT_DRIVERS = [
+  { id: "d1", name: "Driver 1", phone: "", vehicle: "", route: "Sainikpuri-Hitech City", time: "8:00 AM", seats: 3, active: true },
+  { id: "d2", name: "Driver 2", phone: "", vehicle: "", route: "Sainikpuri-Hitech City", time: "8:00 AM", seats: 3, active: true },
+  { id: "d3", name: "Driver 3", phone: "", vehicle: "", route: "Sainikpuri-Hitech City", time: "8:00 AM", seats: 4, active: true },
+];
+
 function load() {
   try {
-    return JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
+    const db = JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
+    if (!db.drivers || db.drivers.length === 0) return { drivers: DEFAULT_DRIVERS };
+    return db;
   } catch {
-    return { drivers: [] };
+    return { drivers: DEFAULT_DRIVERS };
   }
 }
 
