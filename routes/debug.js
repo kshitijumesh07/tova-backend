@@ -1,58 +1,208 @@
+/**
+ * Debug / Ops endpoints
+ * Protected by DEBUG_TOKEN env var (Bearer token or ?token= query param).
+ * Set DEBUG_TOKEN in Railway backend variables.
+ *
+ * Routes:
+ *   GET /debug/bookings   ?status=  ?today=1  ?limit=
+ *   GET /debug/payments   ?status=  ?limit=
+ *   GET /debug/users      ?limit=
+ *   GET /debug/metrics
+ *   GET /debug/latest
+ */
+
 const express = require("express");
-const { getBookings } = require("../models/bookingStore");
-const { getDrivers, addDriver } = require("../models/driverStore");
-const prisma = require("../services/db");
+const prisma  = require("../services/db");
 
 const router = express.Router();
 
+// ── Auth middleware ───────────────────────────────────────────────────────────
+
+function requireToken(req, res, next) {
+  const secret = process.env.DEBUG_TOKEN;
+
+  if (!secret) {
+    // No token configured — open only in local dev; warn if looks like prod.
+    if (process.env.NODE_ENV === "production") {
+      return res.status(503).json({ error: "DEBUG_TOKEN not configured on server" });
+    }
+    return next();
+  }
+
+  const fromQuery  = req.query.token;
+  const fromHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  const provided   = fromQuery || fromHeader;
+
+  if (provided !== secret) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+}
+
+router.use(requireToken);
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function todayStart() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function parseLimit(q, def = 50) {
+  const n = parseInt(q);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 500) : def;
+}
+
+function fmtBooking(b) {
+  return {
+    id:            b.id,
+    orderId:       b.orderId,
+    userPhone:     b.phone,
+    rideId:        b.rideId,
+    status:        b.status,
+    paymentStatus: b.payment ? b.payment.status : "NONE",
+    amountInr:     b.payment ? b.payment.amount / 100 : b.amount / 100,
+    createdAt:     b.createdAt,
+    confirmedAt:   b.confirmedAt || null,
+  };
+}
+
+function fmtPayment(p) {
+  return {
+    id:               p.id,
+    razorpayOrderId:  p.razorpayOrderId,
+    razorpayPaymentId: p.razorpayPaymentId,
+    bookingPhone:     p.booking?.phone || null,
+    amountInr:        p.amount / 100,
+    status:           p.status,
+    createdAt:        p.createdAt,
+  };
+}
+
+function fmtUser(u) {
+  return {
+    id:           u.id,
+    phone:        u.phone,
+    name:         u.name || null,
+    totalBookings: u._count?.bookings ?? 0,
+    createdAt:    u.createdAt,
+  };
+}
+
+// ── GET /debug/bookings ───────────────────────────────────────────────────────
+
 router.get("/bookings", async (req, res) => {
-  const bookings = await getBookings();
-  res.json(bookings);
+  try {
+    const where = {};
+    if (req.query.status) where.status = req.query.status.toUpperCase();
+    if (req.query.today)  where.createdAt = { gte: todayStart() };
+
+    const rows = await prisma.booking.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take:    parseLimit(req.query.limit),
+      include: { payment: true },
+    });
+
+    res.json({ count: rows.length, bookings: rows.map(fmtBooking) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-router.get("/drivers", (req, res) => {
-  res.json(getDrivers());
+// ── GET /debug/payments ───────────────────────────────────────────────────────
+
+router.get("/payments", async (req, res) => {
+  try {
+    const where = {};
+    if (req.query.status) where.status = req.query.status.toUpperCase();
+
+    const rows = await prisma.payment.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take:    parseLimit(req.query.limit),
+      include: { booking: { select: { phone: true } } },
+    });
+
+    res.json({ count: rows.length, payments: rows.map(fmtPayment) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
+
+// ── GET /debug/users ──────────────────────────────────────────────────────────
+
+router.get("/users", async (req, res) => {
+  try {
+    const rows = await prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+      take:    parseLimit(req.query.limit),
+      include: { _count: { select: { bookings: true } } },
+    });
+
+    res.json({ count: rows.length, users: rows.map(fmtUser) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /debug/metrics ────────────────────────────────────────────────────────
 
 router.get("/metrics", async (req, res) => {
-  const [total, confirmed, failed, pending] = await Promise.all([
-    prisma.booking.count(),
-    prisma.booking.count({ where: { status: "CONFIRMED" } }),
-    prisma.booking.count({ where: { status: "FAILED" } }),
-    prisma.booking.count({ where: { status: "CREATED" } }),
-  ]);
+  try {
+    const [total, confirmed, failed, pending, totalUsers] = await Promise.all([
+      prisma.booking.count(),
+      prisma.booking.count({ where: { status: "CONFIRMED" } }),
+      prisma.booking.count({ where: { status: "FAILED" } }),
+      prisma.booking.count({ where: { status: "CREATED" } }),
+      prisma.user.count(),
+    ]);
 
-  const payments = await prisma.payment.aggregate({
-    where: { status: "CAPTURED" },
-    _sum: { amount: true },
-  });
+    const [revenue, todayBookings, todayRevenue] = await Promise.all([
+      prisma.payment.aggregate({ where: { status: "CAPTURED" }, _sum: { amount: true } }),
+      prisma.booking.count({ where: { status: "CONFIRMED", confirmedAt: { gte: todayStart() } } }),
+      prisma.payment.aggregate({
+        where: { status: "CAPTURED", createdAt: { gte: todayStart() } },
+        _sum:  { amount: true },
+      }),
+    ]);
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayCount = await prisma.booking.count({
-    where: { status: "CONFIRMED", confirmedAt: { gte: todayStart } },
-  });
-
-  res.json({
-    total,
-    confirmed,
-    failed,
-    pending,
-    revenue_paise: payments._sum.amount || 0,
-    revenue_inr: Math.round((payments._sum.amount || 0) / 100),
-    today_confirmed: todayCount,
-    conversion_pct: total > 0 ? Math.round((confirmed / total) * 100) : 0,
-  });
+    res.json({
+      bookings: { total, confirmed, failed, pending },
+      users:    { total: totalUsers },
+      revenue:  {
+        all_time_inr: Math.round((revenue._sum.amount || 0) / 100),
+        today_inr:    Math.round((todayRevenue._sum.amount || 0) / 100),
+      },
+      today:    { confirmed: todayBookings },
+      conversion_pct: total > 0 ? Math.round((confirmed / total) * 100) : 0,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-router.post("/drivers/add", (req, res) => {
-  const { id, name, phone, vehicle, route, time, seats } = req.body;
-  if (!id || !name || !phone || !route || !time || !seats) {
-    return res.status(400).json({ error: "Missing required fields" });
+// ── GET /debug/latest ─────────────────────────────────────────────────────────
+
+router.get("/latest", async (req, res) => {
+  try {
+    const [bookings, payments, users] = await Promise.all([
+      prisma.booking.findMany({ orderBy: { createdAt: "desc" }, take: 5, include: { payment: true } }),
+      prisma.payment.findMany({ orderBy: { createdAt: "desc" }, take: 5, include: { booking: { select: { phone: true } } } }),
+      prisma.user.findMany({   orderBy: { createdAt: "desc" }, take: 5, include: { _count: { select: { bookings: true } } } }),
+    ]);
+
+    res.json({
+      latest_bookings: bookings.map(fmtBooking),
+      latest_payments: payments.map(fmtPayment),
+      latest_users:    users.map(fmtUser),
+      generated_at:    new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-  const result = addDriver({ id, name, phone, vehicle, route, time, seats: Number(seats) });
-  if (result.error) return res.status(409).json(result);
-  return res.json(result);
 });
 
 module.exports = router;
