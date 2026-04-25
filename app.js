@@ -7,6 +7,10 @@ const cors = require("cors");
 const app = express();
 
 app.use(cors());
+
+// webhook MUST be before express.json() to receive raw body for HMAC verification
+app.use("/webhook", require("./routes/webhook"));
+
 app.use(express.json());
 
 app.use("/whatsapp", require("./routes/whatsapp"));
