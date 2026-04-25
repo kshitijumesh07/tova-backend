@@ -1,5 +1,9 @@
 const https = require("https");
 
+// Set WHATSAPP_MODE=production in Railway to switch to custom text messages
+// Default is sandbox mode using the hello_world template
+const MODE = process.env.WHATSAPP_MODE || "sandbox";
+
 function notifyUser(phone, message) {
   const TOKEN = process.env.WHATSAPP_TOKEN;
   const PHONE_ID = process.env.WHATSAPP_PHONE_ID;
@@ -9,12 +13,22 @@ function notifyUser(phone, message) {
     return;
   }
 
-  const body = JSON.stringify({
-    messaging_product: "whatsapp",
-    to: phone,
-    type: "text",
-    text: { body: message },
-  });
+  const body = MODE === "production"
+    ? JSON.stringify({
+        messaging_product: "whatsapp",
+        to: phone,
+        type: "text",
+        text: { body: message },
+      })
+    : JSON.stringify({
+        messaging_product: "whatsapp",
+        to: phone,
+        type: "template",
+        template: {
+          name: "hello_world",
+          language: { code: "en_US" },
+        },
+      });
 
   const req = https.request({
     hostname: "graph.facebook.com",
@@ -30,7 +44,8 @@ function notifyUser(phone, message) {
     res.on("data", (chunk) => (data += chunk));
     res.on("end", () => {
       if (res.statusCode === 200 || res.statusCode === 201) {
-        console.log("META WHATSAPP SENT:", phone, "|", data);
+        const label = MODE === "production" ? "META WHATSAPP SENT" : "META TEMPLATE SENT";
+        console.log(`${label}:`, phone, "|", data);
       } else {
         console.error("META WHATSAPP ERROR:", res.statusCode, data);
       }
