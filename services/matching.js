@@ -1,73 +1,57 @@
-const { getAvailableDrivers } = require("../models/driverStore");
-
-const ALLOWED_ROUTES = [
-  { from: "sainikpuri", to: "hitech city" },
-  { from: "hitech city", to: "sainikpuri" },
-];
-
-const ALLOWED_TIMES = ["8:00 AM", "6:00 PM"];
-
-const RIDES = [
-  { id: "1", from: "Sainikpuri", to: "Hitech City", time: "8:00 AM", km: 18 },
-  { id: "2", from: "Sainikpuri", to: "Hitech City", time: "6:00 PM", km: 18 },
-  { id: "3", from: "Hitech City", to: "Sainikpuri", time: "8:00 AM", km: 18 },
-  { id: "4", from: "Hitech City", to: "Sainikpuri", time: "6:00 PM", km: 18 },
-  { id: "5", from: "Sainikpuri", to: "Hitech City", time: "8:00 AM", km: 18 },
-];
-
-function calcPrice(km) {
-  return Math.min(Math.max(km * 8, 40), 150);
-}
+const prisma = require("./db");
 
 function parseTime(str) {
   const [time, period] = str.trim().split(" ");
   let [h, m] = time.split(":").map(Number);
   if (period === "PM" && h !== 12) h += 12;
   if (period === "AM" && h === 12) h = 0;
-  return h * 60 + m;
+  return h * 60 + (m || 0);
 }
 
-function matchRides(pickup, destination, time) {
-  const fromKey = pickup.toLowerCase().trim();
-  const toKey = destination.toLowerCase().trim();
+async function matchRides(pickup, destination, time, date = new Date()) {
+  const dayStart = new Date(date);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(date);
+  dayEnd.setUTCHours(23, 59, 59, 999);
 
-  const routeAllowed = ALLOWED_ROUTES.some((r) => r.from === fromKey && r.to === toKey);
-  if (!routeAllowed) return { error: "Route not available" };
-
-  const requestedMin = parseTime(time);
-
-  const matches = RIDES.filter((r) => {
-    if (r.from.toLowerCase() !== fromKey) return false;
-    if (r.to.toLowerCase() !== toKey) return false;
-    if (!ALLOWED_TIMES.includes(r.time)) return false;
-    if (Math.abs(parseTime(r.time) - requestedMin) > 30) return false;
-
-    // only include ride if a driver exists for this slot
-    const route = `${r.from}-${r.to}`;
-    const drivers = getAvailableDrivers(route, r.time);
-    return drivers.length > 0;
+  const trips = await prisma.trip.findMany({
+    where: {
+      status: "OPEN",
+      seatsLeft: { gt: 0 },
+      tripDate: { gte: dayStart, lte: dayEnd },
+      route: {
+        fromName: { equals: pickup.trim(), mode: "insensitive" },
+        toName:   { equals: destination.trim(), mode: "insensitive" },
+        active: true,
+      },
+    },
+    include: {
+      route: true,
+      host:  { select: { name: true } },
+    },
   });
 
-  if (matches.length === 0) return [];
+  let requestedMin = 0;
+  try { requestedMin = parseTime(time); } catch {}
 
-  matches.sort(
+  const nearby = trips.filter(
+    (t) => Math.abs(parseTime(t.departureTime) - requestedMin) <= 90
+  );
+  nearby.sort(
     (a, b) =>
-      Math.abs(parseTime(a.time) - requestedMin) -
-      Math.abs(parseTime(b.time) - requestedMin)
+      Math.abs(parseTime(a.departureTime) - requestedMin) -
+      Math.abs(parseTime(b.departureTime) - requestedMin)
   );
 
-  return matches.map((r) => {
-    const route = `${r.from}-${r.to}`;
-    const drivers = getAvailableDrivers(route, r.time);
-    const seats = drivers.reduce((sum, d) => sum + d.seats, 0);
-    return {
-      id: r.id,
-      time: r.time,
-      price: calcPrice(r.km),
-      seats,
-      driver_id: drivers[0].id,
-    };
-  });
+  return nearby.map((t) => ({
+    id:       t.id,
+    time:     t.departureTime,
+    price:    t.priceInr,
+    seats:    t.seatsLeft,
+    hostName: t.host.name,
+    from:     t.route.fromName,
+    to:       t.route.toName,
+  }));
 }
 
 module.exports = { matchRides };

@@ -6,6 +6,43 @@ datasource db {
   provider = "postgresql"
 }
 
+model Host {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String   @unique
+  vehicle   String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  trips     Trip[]
+}
+
+model Route {
+  id         String  @id @default(cuid())
+  fromName   String
+  toName     String
+  distanceKm Float   @default(18)
+  active     Boolean @default(true)
+  trips      Trip[]
+
+  @@unique([fromName, toName])
+}
+
+model Trip {
+  id            String    @id @default(cuid())
+  routeId       String
+  route         Route     @relation(fields: [routeId], references: [id])
+  hostId        String
+  host          Host      @relation(fields: [hostId], references: [id])
+  departureTime String
+  tripDate      DateTime
+  totalSeats    Int
+  seatsLeft     Int
+  priceInr      Int
+  status        String    @default("OPEN")
+  createdAt     DateTime  @default(now())
+  bookings      Booking[]
+}
+
 model User {
   id        String    @id @default(uuid())
   phone     String    @unique
@@ -19,6 +56,7 @@ model Booking {
   orderId     String    @unique
   phone       String
   rideId      String
+  tripId      String?
   pickup      String?
   drop        String?
   amount      Int       @default(5000)
@@ -28,6 +66,7 @@ model Booking {
   confirmedAt DateTime?
   user        User      @relation(fields: [phone], references: [phone])
   payment     Payment?
+  trip        Trip?     @relation(fields: [tripId], references: [id])
 }
 
 model Payment {

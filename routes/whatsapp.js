@@ -26,7 +26,7 @@ router.get("/incoming", (req, res) => {
 });
 
 // Meta webhook incoming messages
-router.post("/incoming", (req, res) => {
+router.post("/incoming", async (req, res) => {
   // Acknowledge immediately so Meta doesn't retry
   res.status(200).send("OK");
 
@@ -93,12 +93,9 @@ router.post("/incoming", (req, res) => {
       reply = "Please enter a valid time.";
     } else {
       session.time = text;
-      const result = matchRides(session.pickup, session.destination, session.time);
+      const result = await matchRides(session.pickup, session.destination, session.time);
 
-      if (result.error) {
-        sessions[phone] = { step: "START" };
-        reply = `${result.error}. Type 'hi' to start over.`;
-      } else if (result.length === 0) {
+      if (result.length === 0) {
         sessions[phone] = { step: "START" };
         reply = "No rides found for that time. Type 'hi' to start over.";
       } else {
@@ -115,8 +112,9 @@ router.post("/incoming", (req, res) => {
     } else {
       const ride = session.foundRides[idx];
       session.step = "START";
+      session.selectedTripId = ride.id;
       const link = `https://tova-web.vercel.app/checkout?ride=${ride.id}&user=${encodeURIComponent("+" + phone)}`;
-      reply = `Ride confirmed: ${ride.time} | ₹${ride.price}\nClick to pay:\n${link}`;
+      reply = `Ride selected: ${ride.time} | ₹${ride.price} | ${ride.seats} seat(s) left\nTap to pay:\n${link}`;
     }
 
   } else {
