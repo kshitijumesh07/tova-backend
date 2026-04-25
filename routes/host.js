@@ -1,7 +1,45 @@
-const express = require("express");
-const prisma  = require("../services/db");
+const express    = require("express");
+const prisma     = require("../services/db");
+const { setOtp, getOtp, clearOtp } = require("../services/session");
+const { notifyUser } = require("../services/notify");
 
 const router = express.Router();
+
+// ── POST /host/request-otp ────────────────────────────────────────────────────
+
+router.post("/request-otp", async (req, res) => {
+  const phone = (req.body.phone || "").replace(/^\+/, "");
+  if (!phone) return res.status(400).json({ error: "phone required" });
+
+  const host = await prisma.host.findUnique({ where: { phone } });
+  if (!host) return res.status(404).json({ error: "Host not found. Contact TOVA to register." });
+
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  await setOtp(phone, otp);
+  await notifyUser(phone, `Your TOVA host login code: *${otp}*\n\nValid for 5 minutes. Do not share this with anyone.`);
+
+  console.log("[host] OTP sent to", phone);
+  res.json({ sent: true });
+});
+
+// ── POST /host/verify-otp ─────────────────────────────────────────────────────
+
+router.post("/verify-otp", async (req, res) => {
+  const phone = (req.body.phone || "").replace(/^\+/, "");
+  const otp   = (req.body.otp   || "").trim();
+
+  if (!phone || !otp) return res.status(400).json({ error: "phone and otp required" });
+
+  const stored = await getOtp(phone);
+  if (!stored || stored !== otp) {
+    return res.status(401).json({ error: "Invalid or expired code. Request a new one." });
+  }
+
+  await clearOtp(phone);
+
+  const host = await prisma.host.findUnique({ where: { phone } });
+  res.json({ id: host.id, name: host.name, phone: host.phone, vehicle: host.vehicle });
+});
 
 function dayBounds(date = new Date()) {
   const start = new Date(date);

@@ -65,4 +65,36 @@ async function clearSession(phone) {
 
 init();
 
-module.exports = { getSession, setSession, clearSession };
+// ── OTP helpers ───────────────────────────────────────────────────────────────
+
+const OTP_PREFIX = "tova:otp:";
+const OTP_TTL    = 300; // 5 minutes
+
+async function setOtp(phone, otp) {
+  const key = OTP_PREFIX + phone;
+  if (redis) {
+    try { await redis.setex(key, OTP_TTL, otp); return; }
+    catch (err) { console.error("[session] setOtp failed:", err.message); }
+  }
+  fallback[key] = otp;
+  setTimeout(() => delete fallback[key], OTP_TTL * 1000);
+}
+
+async function getOtp(phone) {
+  const key = OTP_PREFIX + phone;
+  if (redis) {
+    try { return await redis.get(key); }
+    catch (err) { console.error("[session] getOtp failed:", err.message); }
+  }
+  return fallback[key] || null;
+}
+
+async function clearOtp(phone) {
+  const key = OTP_PREFIX + phone;
+  if (redis) {
+    try { await redis.del(key); return; } catch {}
+  }
+  delete fallback[key];
+}
+
+module.exports = { getSession, setSession, clearSession, setOtp, getOtp, clearOtp };
