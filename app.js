@@ -18,6 +18,7 @@ app.use("/trip",    require("./routes/trip"));
 app.use("/payment", require("./routes/payment"));
 app.use("/payment", require("./routes/verify"));
 app.use("/booking", require("./routes/booking"));
+app.use("/host",    require("./routes/host"));
 app.use("/debug",   require("./routes/debug"));
 
 app.get("/", (req, res) => res.send("OK"));
