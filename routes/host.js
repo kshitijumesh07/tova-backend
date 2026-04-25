@@ -5,6 +5,68 @@ const { notifyUser } = require("../services/notify");
 
 const router = express.Router();
 
+// ── POST /host/register ───────────────────────────────────────────────────────
+// Step 1: submit details + request OTP
+// Step 2: verify OTP → host created
+
+router.post("/register/request", async (req, res) => {
+  const { name, vehicle, comfortSeats } = req.body;
+  const phone = (req.body.phone || "").replace(/^\+/, "");
+
+  if (!phone || !name || !vehicle || !comfortSeats) {
+    return res.status(400).json({ error: "name, phone, vehicle, comfortSeats required" });
+  }
+
+  const existing = await prisma.host.findUnique({ where: { phone } });
+  if (existing) {
+    return res.status(409).json({ error: "This number is already registered. Go to /host to log in." });
+  }
+
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  // Store OTP along with pending registration data
+  await setOtp(phone, JSON.stringify({ otp, name, vehicle, comfortSeats: parseInt(comfortSeats) }));
+  await notifyUser(phone, `Your TOVA host registration code: *${otp}*\n\nValid for 5 minutes.`);
+
+  console.log("[host] register OTP sent to", phone);
+  res.json({ sent: true });
+});
+
+router.post("/register/verify", async (req, res) => {
+  const phone = (req.body.phone || "").replace(/^\+/, "");
+  const otp   = (req.body.otp   || "").trim();
+
+  if (!phone || !otp) return res.status(400).json({ error: "phone and otp required" });
+
+  const raw = await getOtp(phone);
+  if (!raw) return res.status(401).json({ error: "Code expired. Request a new one." });
+
+  let pending;
+  try { pending = JSON.parse(raw); } catch {
+    return res.status(500).json({ error: "Invalid session. Start over." });
+  }
+
+  if (pending.otp !== otp) return res.status(401).json({ error: "Wrong code. Try again." });
+
+  await clearOtp(phone);
+
+  const existing = await prisma.host.findUnique({ where: { phone } });
+  if (existing) {
+    return res.status(409).json({ error: "Already registered. Go to /host to log in." });
+  }
+
+  const host = await prisma.host.create({
+    data: {
+      phone,
+      name:    pending.name,
+      vehicle: `${pending.vehicle} (${pending.comfortSeats} seats)`,
+      active:  true,
+    },
+  });
+
+  console.log("[host] registered:", phone, pending.name);
+  res.json({ id: host.id, name: host.name, phone: host.phone, vehicle: host.vehicle });
+});
+
 // ── POST /host/request-otp ────────────────────────────────────────────────────
 
 router.post("/request-otp", async (req, res) => {

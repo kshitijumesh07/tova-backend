@@ -205,6 +205,81 @@ router.get("/latest", async (req, res) => {
   }
 });
 
+// ── GET /debug/hosts ──────────────────────────────────────────────────────────
+
+router.get("/hosts", async (req, res) => {
+  try {
+    const hosts = await prisma.host.findMany({
+      orderBy: { createdAt: "desc" },
+      include: { _count: { select: { trips: true } } },
+    });
+    res.json(hosts.map((h) => ({
+      id:        h.id,
+      name:      h.name,
+      phone:     h.phone,
+      vehicle:   h.vehicle,
+      active:    h.active,
+      trips:     h._count.trips,
+      createdAt: h.createdAt,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /debug/host/:id/toggle ──────────────────────────────────────────────
+
+router.patch("/host/:id/toggle", async (req, res) => {
+  try {
+    const host    = await prisma.host.findUnique({ where: { id: req.params.id } });
+    if (!host) return res.status(404).json({ error: "Host not found" });
+    const updated = await prisma.host.update({ where: { id: req.params.id }, data: { active: !host.active } });
+    res.json({ id: updated.id, active: updated.active });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /debug/routes ─────────────────────────────────────────────────────────
+
+router.get("/routes", async (req, res) => {
+  try {
+    const routes = await prisma.route.findMany({
+      orderBy: { fromName: "asc" },
+      include: { _count: { select: { trips: true } } },
+    });
+    res.json(routes.map((r) => ({
+      id:       r.id,
+      from:     r.fromName,
+      to:       r.toName,
+      active:   r.active,
+      trips:    r._count.trips,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /debug/route ─────────────────────────────────────────────────────────
+
+router.post("/route", async (req, res) => {
+  const { fromName, toName } = req.body;
+  if (!fromName || !toName) return res.status(400).json({ error: "fromName and toName required" });
+  try {
+    const route = await prisma.route.upsert({
+      where:  { fromName_toName: { fromName: fromName.trim(), toName: toName.trim() } },
+      update: { active: true },
+      create: { fromName: fromName.trim(), toName: toName.trim(), active: true },
+    });
+    res.json(route);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /debug/route/:id/toggle ─────────────────────────────────────────────
+
+router.patch("/route/:id/toggle", async (req, res) => {
+  try {
+    const route   = await prisma.route.findUnique({ where: { id: req.params.id } });
+    if (!route) return res.status(404).json({ error: "Route not found" });
+    const updated = await prisma.route.update({ where: { id: req.params.id }, data: { active: !route.active } });
+    res.json({ id: updated.id, active: updated.active });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── GET /debug/resend/:orderId — resend booking confirmation WhatsApp ─────────
 
 router.get("/resend/:orderId", async (req, res) => {
