@@ -15,22 +15,13 @@ function notifyUser(phone, message) {
     return;
   }
 
-  const body = MODE === "production"
-    ? JSON.stringify({
-        messaging_product: "whatsapp",
-        to: phone,
-        type: "text",
-        text: { body: message },
-      })
-    : JSON.stringify({
-        messaging_product: "whatsapp",
-        to: phone,
-        type: "template",
-        template: {
-          name: TEMPLATE_NAME,
-          language: { code: "en_US" },
-        },
-      });
+  // Text replies work within 24h of user-initiated conversation (sandbox included)
+  const body = JSON.stringify({
+    messaging_product: "whatsapp",
+    to: phone,
+    type: "text",
+    text: { body: message },
+  });
 
   const req = https.request({
     hostname: "graph.facebook.com",

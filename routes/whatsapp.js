@@ -1,5 +1,6 @@
 const express = require("express");
 const { matchRides } = require("../services/matching");
+const { notifyUser } = require("../services/notify");
 
 const router = express.Router();
 
@@ -11,17 +12,35 @@ function formatRides(rides) {
     .join("\n");
 }
 
-router.post("/incoming", (req, res) => {
-  console.log(JSON.stringify(req.body, null, 2));
+// Meta webhook verification
+router.get("/incoming", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
 
-  // Step 2: phone number IS the user identity
-  const phone = req.body.phone;
-  if (!phone) {
-    return res.status(400).json({ error: "phone is required" });
+  if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+    console.log("WhatsApp webhook verified");
+    return res.status(200).send(challenge);
   }
+  return res.status(403).send("Forbidden");
+});
 
-  const text = (req.body.message?.text || "").trim();
+// Meta webhook incoming messages
+router.post("/incoming", (req, res) => {
+  // Acknowledge immediately so Meta doesn't retry
+  res.status(200).send("OK");
+
+  const entry = req.body?.entry?.[0];
+  const change = entry?.changes?.[0]?.value;
+  const msg = change?.messages?.[0];
+
+  if (!msg || msg.type !== "text") return;
+
+  const phone = msg.from; // e.g. "919390537737"
+  const text = (msg.text?.body || "").trim();
   const lower = text.toLowerCase();
+
+  console.log("WA INCOMING:", phone, "|", text);
 
   if (!sessions[phone]) sessions[phone] = { step: "START" };
   const session = sessions[phone];
@@ -76,10 +95,8 @@ router.post("/incoming", (req, res) => {
       reply = `Invalid choice. Reply with a number between 1 and ${session.foundRides?.length ?? 1}.`;
     } else {
       const ride = session.foundRides[idx];
-      session.selectedRide = ride;
       session.step = "START";
-      // Step 1+2: checkout link carries both ride_id and user_id (phone)
-      const link = `https://tova-web.vercel.app/checkout?ride=${ride.id}&user=${encodeURIComponent(phone)}`;
+      const link = `https://tova-web.vercel.app/checkout?ride=${ride.id}&user=${encodeURIComponent("+" + phone)}`;
       reply = `Ride confirmed: ${ride.time} | ₹${ride.price}\nClick to pay:\n${link}`;
     }
 
@@ -87,7 +104,7 @@ router.post("/incoming", (req, res) => {
     reply = "Please follow the steps. Type 'hi' to start.";
   }
 
-  res.json({ message: reply });
+  notifyUser(phone, reply);
 });
 
 module.exports = router;
