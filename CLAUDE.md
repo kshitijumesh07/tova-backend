@@ -1,44 +1,33 @@
-# TOVA Backend — Claude Operating Rules
+# TOVA Backend
 
-@docs/SECURITY.md
-@docs/DEPLOYMENT.md
-@docs/ARCHITECTURE.md
+## Stack
+- Runtime: Node.js + Express on Railway
+- Payments: Razorpay (webhook = source of truth)
+- WhatsApp: Meta Cloud API v25.0 via `services/notify.js`
+- Storage: JSON files in `data/` (gitignored)
 
-# Security + Infrastructure Rules
+## Security Non-Negotiables
+- Never commit `.env` or real secrets
+- Never log secret values — only log present/missing
+- Secrets live in Railway Variables only
 
-## Mandatory Security Controls
+## Critical Architecture Rules
+- Webhook route must be mounted BEFORE `express.json()` in `app.js`
+- All WhatsApp sends go through `services/notify.js` only
+- Booking confirmation source of truth = `/webhook/razorpay`
+- `confirmBooking()` looks up by `order_id` only — not user_id
 
-- Rotate all tokens, API keys, and secrets regularly.
-- Never expose secrets client-side.
-- Store secrets only in Railway environment variables.
-- Enable MFA on: GitHub, Railway, Meta Developer, Razorpay.
-- Restrict team/member access to minimum required permissions.
-- Use separate environments for: Development, Staging, Production.
-- Audit connected OAuth / third-party apps regularly.
-- Monitor deployment logs, auth events, and unusual access.
+## Coding Conventions
+- CommonJS (`require`) throughout — do not convert to ESM
+- No Prisma in active execution path — JSON file store only
+- Default drivers loaded from `models/driverStore.js` when `data/drivers.json` missing
 
-## Secrets Policy
+## Deploy
+- Push to GitHub → Railway auto-redeploys
+- Verify: logs show `RUNNING <PORT>` + `ENV KEY: loaded`
+- See `docs/DEPLOYMENT.md` for full process
 
-- `.env` is gitignored and never committed.
-- `.env.example` contains only placeholder keys — no real values.
-- All production secrets live in Railway Variables dashboard only.
-- Never log secret values — only log whether they are loaded (present/missing).
-
-## Code Rules
-
-- Never hardcode ride prices, seat counts, or phone numbers in route files.
-- All supply data lives in `data/drivers.json`.
-- Booking state lives in `data/bookings.json` — never in memory only.
-- WhatsApp notifications go through `services/notify.js` only.
-- Webhook route must always be mounted BEFORE `express.json()` in app.js.
-
-## Deployment Policy
-
-- Backend: Railway. Do not migrate without product traction justification.
-- Push to GitHub to trigger Railway redeploy — never deploy manually.
-- Always confirm Railway deploy logs show `RUNNING` + `ENV KEY: loaded` after push.
-
-## Founder Priority Rule
-
-Do not optimize infrastructure before product traction.
-Growth > premature infra changes.
+## Reference Docs
+- Auth/secrets/tokens → `docs/SECURITY.md`
+- Infra changes → `docs/DEPLOYMENT.md`
+- Booking/payment flows → `docs/ARCHITECTURE.md`
