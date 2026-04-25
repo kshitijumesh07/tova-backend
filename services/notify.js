@@ -15,10 +15,13 @@ function notifyUser(phone, message) {
     return;
   }
 
+  // Meta API expects phone without leading +
+  const to = phone.replace(/^\+/, "");
+
   // Text replies work within 24h of user-initiated conversation (sandbox included)
   const body = JSON.stringify({
     messaging_product: "whatsapp",
-    to: phone,
+    to,
     type: "text",
     text: { body: message },
   });

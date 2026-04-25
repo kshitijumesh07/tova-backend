@@ -13,6 +13,9 @@ router.post("/create", async (req, res) => {
   const { ride_id, user_id } = req.body;
   if (!ride_id || !user_id) return res.status(400).json({ error: "ride_id and user_id required" });
 
+  // Normalize phone — strip leading + so it matches the WhatsApp session format
+  const phone = user_id.replace(/^\+/, "");
+
   let trip;
   try {
     trip = await prisma.trip.findUnique({
@@ -39,7 +42,7 @@ router.post("/create", async (req, res) => {
       notes:    { ride_id, user_id },
     });
 
-    await createBooking(order.id, ride_id, user_id, trip.seatsLeft, ride_id);
+    await createBooking(order.id, ride_id, phone, trip.seatsLeft, ride_id);
 
     console.log("ORDER CREATED:", order.id, "| trip:", ride_id, "| user:", user_id);
     return res.json({ id: order.id, amount: order.amount, currency: order.currency });

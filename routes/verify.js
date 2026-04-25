@@ -34,7 +34,12 @@ router.post("/verify", async (req, res) => {
 
   const booking = await getBookingByOrderId(razorpay_order_id);
   if (booking?.phone) {
-    notifyUser(booking.phone, `Your TOVA ride is confirmed! Order: ${razorpay_order_id}`);
+    const trip  = booking.trip;
+    const route = trip?.route;
+    const line  = route
+      ? `${route.fromName} → ${route.toName} | ${trip.departureTime}`
+      : razorpay_order_id;
+    notifyUser(booking.phone, `Booking confirmed!\n${line}\n\nSee you at the pickup stop. Type 'hi' to book another ride.`);
   }
 
   console.log("Payment verified:", razorpay_order_id);
