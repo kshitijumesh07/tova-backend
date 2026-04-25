@@ -205,6 +205,27 @@ router.get("/latest", async (req, res) => {
   }
 });
 
+// ── GET /debug/resend/:orderId — resend booking confirmation WhatsApp ─────────
+
+router.get("/resend/:orderId", async (req, res) => {
+  const prisma  = require("../services/db");
+  const { notifyUser } = require("../services/notify");
+  const booking = await prisma.booking.findUnique({
+    where:   { orderId: req.params.orderId },
+    include: { trip: { include: { route: true } } },
+  });
+  if (!booking) return res.status(404).json({ error: "Booking not found" });
+
+  const route = booking.trip?.route;
+  const line  = route
+    ? `${route.fromName} → ${route.toName} | ${booking.trip.departureTime}`
+    : booking.orderId;
+
+  console.log("[resend] sending to:", booking.phone);
+  await notifyUser(booking.phone, `Booking confirmed!\n${line}\n\nSee you at the pickup stop. Type 'hi' to book another ride.`);
+  res.json({ sent: true, to: booking.phone, message: line });
+});
+
 // ── POST /debug/notify — test WhatsApp send ───────────────────────────────────
 // Body: { phone: "919178...", message: "test" }
 
