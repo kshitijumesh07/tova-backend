@@ -1,17 +1,12 @@
 const express = require("express");
-const { matchRides }                    = require("../services/matching");
-const { notifyUser }                    = require("../services/notify");
-const { getSession, setSession, clearSession } = require("../services/session");
+const { getPickupZones, getDestinationsFor, findTripsForRoute } = require("../services/matching");
+const { notifyUser }                                            = require("../services/notify");
+const { getSession, setSession, clearSession }                  = require("../services/session");
 
 const router = express.Router();
 
-function formatRides(rides) {
-  return rides
-    .map((r, i) => `${i + 1}. ${r.time} | ₹${r.price} | ${r.seats} seat(s)`)
-    .join("\n");
-}
+// ── Meta webhook verification ────────────────────────────────────────────────
 
-// Meta webhook verification
 router.get("/incoming", (req, res) => {
   const mode      = req.query["hub.mode"];
   const token     = req.query["hub.verify_token"];
@@ -24,103 +19,130 @@ router.get("/incoming", (req, res) => {
   return res.status(403).send("Forbidden");
 });
 
-// Meta webhook incoming messages
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function numberedList(items) {
+  return items.map((item, i) => `${i + 1}. ${item}`).join("\n");
+}
+
+// ── Incoming messages ────────────────────────────────────────────────────────
+
 router.post("/incoming", async (req, res) => {
-  // Acknowledge immediately so Meta doesn't retry
   res.status(200).send("OK");
 
   const entry  = req.body?.entry?.[0];
   const change = entry?.changes?.[0]?.value;
   const msg    = change?.messages?.[0];
 
-  if (!msg || (msg.type !== "text" && msg.type !== "location")) return;
+  if (!msg || msg.type !== "text") return;
 
   const phone = msg.from;
-
-  let text         = "";
-  let locationMeta = null;
-
-  if (msg.type === "location") {
-    const loc = msg.location || {};
-    locationMeta = {
-      latitude:  loc.latitude,
-      longitude: loc.longitude,
-      name:      loc.name    || null,
-      address:   loc.address || null,
-    };
-    text = loc.name || loc.address || `${loc.latitude},${loc.longitude}`;
-  } else {
-    text = (msg.text?.body || "").trim();
-  }
-
+  const text  = (msg.text?.body || "").trim();
   const lower = text.toLowerCase();
 
-  console.log("WA INCOMING:", phone, "|", msg.type, "|", text);
+  console.log("WA INCOMING:", phone, "|", text);
 
   const session = await getSession(phone);
 
   let reply;
 
-  if (lower === "hi" || lower === "hello") {
-    await setSession(phone, { step: "AWAITING_PICKUP" });
-    reply = "Welcome to TOVA!\nEnter your pickup location:";
+  // ── Start / reset ────────────────────────────────────────────────────────
 
-  } else if (session.step === "AWAITING_PICKUP") {
-    if (!text) {
-      reply = "Please enter a valid pickup location.";
+  if (lower === "hi" || lower === "hello" || lower === "start" || lower === "menu") {
+    await setSession(phone, { step: "DIRECTION" });
+    reply = "Welcome to TOVA!\n\n1. Going to Work\n2. Returning Home";
+
+  // ── Step 1: direction ────────────────────────────────────────────────────
+
+  } else if (session.step === "DIRECTION") {
+    if (text !== "1" && text !== "2") {
+      reply = "Please reply 1 or 2.\n\n1. Going to Work\n2. Returning Home";
     } else {
-      session.pickup     = text;
-      session.step       = "AWAITING_DESTINATION";
-      if (locationMeta) session.pickupCoords = locationMeta;
-      await setSession(phone, session);
-      reply = "Enter your destination:";
-    }
+      session.direction = text === "1" ? "work" : "return";
 
-  } else if (session.step === "AWAITING_DESTINATION") {
-    if (!text) {
-      reply = "Please enter a valid destination.";
-    } else {
-      session.destination = text;
-      session.step        = "AWAITING_TIME";
-      if (locationMeta) session.destinationCoords = locationMeta;
-      await setSession(phone, session);
-      reply = "Enter preferred time (e.g. 8:00 AM or 6:00 PM):";
-    }
-
-  } else if (session.step === "AWAITING_TIME") {
-    if (!text) {
-      reply = "Please enter a valid time.";
-    } else {
-      session.time = text;
-      const result = await matchRides(session.pickup, session.destination, session.time);
-
-      if (result.length === 0) {
+      const zones = await getPickupZones();
+      if (zones.length === 0) {
         await clearSession(phone);
-        reply = "No rides available for that route and time. Type 'hi' to start over.";
+        reply = "No active routes today. Type 'hi' to try again later.";
       } else {
-        session.foundRides = result;
-        session.step       = "SELECTING_RIDE";
+        session.zones = zones;
+        session.step  = "PICKUP_ZONE";
         await setSession(phone, session);
-        reply = `Available rides:\n${formatRides(result)}\nReply with a number to select:`;
+        reply = `Choose your pickup zone:\n${numberedList(zones)}`;
       }
     }
 
-  } else if (session.step === "SELECTING_RIDE") {
+  // ── Step 2: pickup zone ──────────────────────────────────────────────────
+
+  } else if (session.step === "PICKUP_ZONE") {
     const idx = parseInt(text, 10) - 1;
-    if (isNaN(idx) || idx < 0 || !session.foundRides || idx >= session.foundRides.length) {
-      reply = `Invalid choice. Reply with a number between 1 and ${session.foundRides?.length ?? 1}.`;
+    const zones = session.zones || [];
+
+    if (isNaN(idx) || idx < 0 || idx >= zones.length) {
+      reply = `Please reply with a number 1–${zones.length}.\n${numberedList(zones)}`;
     } else {
-      const ride = session.foundRides[idx];
-      await clearSession(phone);
-      const link = `https://tova-web.vercel.app/checkout?ride=${ride.id}&user=${encodeURIComponent("+" + phone)}`;
-      reply = `Ride selected: ${ride.time} | ₹${ride.price} | ${ride.seats} seat(s) left\nTap to pay:\n${link}`;
+      session.pickupZone = zones[idx];
+
+      const dests = await getDestinationsFor(session.pickupZone);
+      if (dests.length === 0) {
+        await clearSession(phone);
+        reply = "No destinations available from that zone. Type 'hi' to try again.";
+      } else {
+        session.dests = dests;
+        session.step  = "DESTINATION";
+        await setSession(phone, session);
+        reply = `Pickup: ${session.pickupZone}\n\nChoose your destination:\n${numberedList(dests)}`;
+      }
     }
 
+  // ── Step 3: destination ──────────────────────────────────────────────────
+
+  } else if (session.step === "DESTINATION") {
+    const idx  = parseInt(text, 10) - 1;
+    const dests = session.dests || [];
+
+    if (isNaN(idx) || idx < 0 || idx >= dests.length) {
+      reply = `Please reply with a number 1–${dests.length}.\n${numberedList(dests)}`;
+    } else {
+      session.destination = dests[idx];
+
+      const rides = await findTripsForRoute(session.pickupZone, session.destination);
+      if (rides.length === 0) {
+        await clearSession(phone);
+        reply = "No rides available on this route today. Type 'hi' to start over.";
+      } else {
+        session.foundRides = rides;
+        session.step       = "SELECTING_RIDE";
+        await setSession(phone, session);
+        const list = rides
+          .map((r, i) => `${i + 1}. ${r.time} | ₹${r.price} | ${r.seats} seat(s)`)
+          .join("\n");
+        reply = `${session.pickupZone} → ${session.destination}\n\nAvailable rides:\n${list}\n\nReply with a number to book:`;
+      }
+    }
+
+  // ── Step 4: select ride ──────────────────────────────────────────────────
+
+  } else if (session.step === "SELECTING_RIDE") {
+    const idx   = parseInt(text, 10) - 1;
+    const rides = session.foundRides || [];
+
+    if (isNaN(idx) || idx < 0 || idx >= rides.length) {
+      reply = `Please reply with a number 1–${rides.length}.`;
+    } else {
+      const ride = rides[idx];
+      await clearSession(phone);
+      const link = `https://tova-web.vercel.app/checkout?ride=${ride.id}&user=${encodeURIComponent("+" + phone)}`;
+      reply = `Ride selected!\n${ride.time} | ₹${ride.price} | ${ride.seats} seat(s)\n\nTap to pay:\n${link}`;
+    }
+
+  // ── Fallback ─────────────────────────────────────────────────────────────
+
   } else {
-    reply = "Please follow the steps. Type 'hi' to start.";
+    reply = "Type 'hi' to start a new booking.";
   }
 
-  notifyUser(phone, reply);
+  if (reply) notifyUser(phone, reply);
 });
 
 module.exports = router;
