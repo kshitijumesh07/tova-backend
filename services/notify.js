@@ -1,15 +1,17 @@
 const https = require("https");
 
-// Set WHATSAPP_MODE=production in Railway to switch to custom text messages
-// Default is sandbox mode using the hello_world template
+// WHATSAPP_MODE=sandbox  → sends hello_world template (Meta test numbers)
+// WHATSAPP_MODE=production → sends custom text (requires Meta business verification)
+// WHATSAPP_TEMPLATE_NAME  → override template name (default: hello_world)
 const MODE = process.env.WHATSAPP_MODE || "sandbox";
+const TEMPLATE_NAME = process.env.WHATSAPP_TEMPLATE_NAME || "hello_world";
 
 function notifyUser(phone, message) {
   const TOKEN = process.env.WHATSAPP_TOKEN;
   const PHONE_ID = process.env.WHATSAPP_PHONE_ID;
 
   if (!TOKEN || !PHONE_ID) {
-    console.error("META WHATSAPP ERROR: WHATSAPP_TOKEN or WHATSAPP_PHONE_ID not set in environment");
+    console.error("META WHATSAPP ERROR: WHATSAPP_TOKEN or WHATSAPP_PHONE_ID not set");
     return;
   }
 
@@ -25,7 +27,7 @@ function notifyUser(phone, message) {
         to: phone,
         type: "template",
         template: {
-          name: "hello_world",
+          name: TEMPLATE_NAME,
           language: { code: "en_US" },
         },
       });
@@ -44,8 +46,7 @@ function notifyUser(phone, message) {
     res.on("data", (chunk) => (data += chunk));
     res.on("end", () => {
       if (res.statusCode === 200 || res.statusCode === 201) {
-        const label = MODE === "production" ? "META WHATSAPP SENT" : "META TEMPLATE SENT";
-        console.log(`${label}:`, phone, "|", data);
+        console.log("META TEMPLATE SENT:", phone, "|", data);
       } else {
         console.error("META WHATSAPP ERROR:", res.statusCode, data);
       }
