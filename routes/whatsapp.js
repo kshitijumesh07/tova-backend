@@ -79,7 +79,7 @@ router.post("/incoming", (req, res) => {
       session.selectedRide = ride;
       session.step = "START";
       // Step 1+2: checkout link carries both ride_id and user_id (phone)
-      const link = `http://localhost:3001/checkout?ride_id=${ride.id}&user_id=${encodeURIComponent(phone)}`;
+      const link = `http://localhost:3001/checkout?ride=${ride.id}&user=${encodeURIComponent(phone)}`;
       reply = `Ride confirmed: ${ride.time} | ₹${ride.price}\nClick to pay:\n${link}`;
     }
 
