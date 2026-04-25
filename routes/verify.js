@@ -16,26 +16,35 @@ router.post("/verify", (req, res) => {
     .update(body)
     .digest("hex");
 
-  if (expectedSignature !== razorpay_signature) {
-    return res.status(400).json({ success: false });
+  const signatureValid = expectedSignature === razorpay_signature;
+
+  if (!signatureValid) {
+    console.warn("Verify: HMAC mismatch for", razorpay_order_id, "— checking if webhook already confirmed");
+
+    // Webhook may have already confirmed this booking — return success if so
+    const booking = getBookings().find((b) => b.order_id === razorpay_order_id);
+    if (booking?.status === "CONFIRMED") {
+      console.log("Verify: booking already CONFIRMED via webhook, returning success");
+      return res.json({ success: true });
+    }
+
+    return res.status(400).json({ success: false, reason: "signature_mismatch" });
   }
 
-  // look up user_id from the booking (set at order creation)
   const booking = getBookings().find((b) => b.order_id === razorpay_order_id);
   const user_id = booking?.user_id || "unknown";
 
-  const result = confirmBooking(razorpay_order_id, user_id);
-  if (result?.error) {
-    console.warn("Verify confirm failed:", result.error);
-    return res.status(409).json({ success: false, reason: result.error });
+  // only confirm if not already confirmed by webhook
+  if (booking?.status !== "CONFIRMED") {
+    const result = confirmBooking(razorpay_order_id, user_id);
+    if (result?.error) {
+      console.warn("Verify confirm failed:", result.error);
+      return res.status(409).json({ success: false, reason: result.error });
+    }
+    notifyUser(user_id, `Your TOVA ride is confirmed! Order: ${razorpay_order_id}`);
   }
 
   console.log("Payment verified:", razorpay_order_id, "| user:", user_id);
-
-  // Step 3: webhook is source of truth for prod; verify handles local dev
-  // Step 4: structured notification
-  notifyUser(user_id, `Your TOVA ride is confirmed! Order: ${razorpay_order_id}`);
-
   return res.json({ success: true });
 });
 
