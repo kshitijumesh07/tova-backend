@@ -205,4 +205,42 @@ router.get("/latest", async (req, res) => {
   }
 });
 
+// ── POST /debug/notify — test WhatsApp send ───────────────────────────────────
+// Body: { phone: "919178...", message: "test" }
+
+router.post("/notify", async (req, res) => {
+  const { phone, message } = req.body;
+  if (!phone) return res.status(400).json({ error: "phone required" });
+
+  const TOKEN    = process.env.WHATSAPP_TOKEN;
+  const PHONE_ID = process.env.WHATSAPP_PHONE_ID;
+
+  if (!TOKEN || !PHONE_ID) {
+    return res.status(500).json({ error: "WHATSAPP_TOKEN or WHATSAPP_PHONE_ID not set" });
+  }
+
+  const to   = phone.replace(/^\+/, "");
+  const body = JSON.stringify({
+    messaging_product: "whatsapp",
+    to,
+    type: "text",
+    text: { body: message || "TOVA test notification" },
+  });
+
+  try {
+    const result = await fetch(`https://graph.facebook.com/v25.0/${PHONE_ID}/messages`, {
+      method:  "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Bearer ${TOKEN}`,
+      },
+      body,
+    });
+    const data = await result.json();
+    res.json({ status: result.status, response: data, to });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
