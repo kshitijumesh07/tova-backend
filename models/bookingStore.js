@@ -1,89 +1,90 @@
-const fs = require("fs");
-const path = require("path");
-const { reduceDriverSeat } = require("./driverStore");
+const prisma = require("../services/db");
 
-const DB_PATH = path.resolve(__dirname, "../data/bookings.json");
-
-function load() {
-  try {
-    return JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
-  } catch {
-    return { bookings: [], seatsTaken: {} };
-  }
-}
-
-function save(db) {
-  // ensure data/ directory exists (Railway ephemeral FS may not have it)
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
-}
-
-function createBooking(order_id, ride_id, user_id, seats_available) {
-  const db = load();
-  db.bookings.push({
-    order_id,
-    ride_id,
-    user_id,
-    status: "CREATED",
-    seats_available,
-    created_at: new Date().toISOString(),
+async function createBooking(orderId, rideId, phone, capacity) {
+  // upsert user so phone always exists in User table
+  await prisma.user.upsert({
+    where: { phone },
+    update: {},
+    create: { phone },
   });
-  save(db);
-  console.log("BOOKING CREATED:", order_id, "| ride:", ride_id, "| user:", user_id);
+
+  await prisma.booking.create({
+    data: { orderId, rideId, phone, capacity: capacity || 10, status: "CREATED" },
+  });
+
+  console.log("BOOKING CREATED:", orderId, "| ride:", rideId, "| user:", phone);
 }
 
-function confirmBooking(order_id, user_id) {
-  const db = load();
-
-  // look up by order_id only — order_id is unique, user_id from webhook notes may differ
-  const booking = db.bookings.find((b) => b.order_id === order_id);
+async function confirmBooking(orderId) {
+  const booking = await prisma.booking.findUnique({ where: { orderId } });
 
   if (!booking) {
-    console.warn("BOOKING NOT FOUND:", order_id);
+    console.warn("BOOKING NOT FOUND:", orderId);
     return { error: "Booking not found" };
   }
 
-  const taken = db.seatsTaken[booking.ride_id] || 0;
-  if (taken >= booking.seats_available) {
-    booking.status = "FAILED";
-    save(db);
-    console.warn("OVERBOOKING REJECTED:", booking.ride_id);
+  if (booking.status === "CONFIRMED") {
+    console.log("BOOKING already CONFIRMED:", orderId);
+    return { success: true };
+  }
+
+  // count confirmed bookings for this ride (overbooking check)
+  const taken = await prisma.booking.count({
+    where: { rideId: booking.rideId, status: "CONFIRMED" },
+  });
+
+  if (taken >= booking.capacity) {
+    await prisma.booking.update({ where: { orderId }, data: { status: "FAILED" } });
+    console.warn("OVERBOOKING REJECTED:", booking.rideId);
     return { error: "No seats available" };
   }
 
-  db.seatsTaken[booking.ride_id] = taken + 1;
-  booking.status = "CONFIRMED";
-  booking.confirmed_at = new Date().toISOString();
-  if (user_id) booking.confirmed_by = user_id;
-  save(db);
+  await prisma.booking.update({
+    where: { orderId },
+    data: { status: "CONFIRMED", confirmedAt: new Date() },
+  });
 
-  if (booking.driver_id) reduceDriverSeat(booking.driver_id);
-  console.log("BOOKING CONFIRMED:", order_id, "| seat", taken + 1, "/", booking.seats_available);
+  console.log("BOOKING CONFIRMED:", orderId, "| seat", taken + 1, "/", booking.capacity);
   return { success: true };
 }
 
-function failBooking(order_id) {
-  const db = load();
-  const booking = db.bookings.find((b) => b.order_id === order_id);
-  if (booking) {
-    booking.status = "FAILED";
-    save(db);
-    console.log("BOOKING FAILED:", order_id);
-  }
+async function failBooking(orderId) {
+  await prisma.booking.updateMany({
+    where: { orderId, status: { not: "CONFIRMED" } },
+    data: { status: "FAILED" },
+  });
+  console.log("BOOKING FAILED:", orderId);
 }
 
-function updateRideStatus(order_id, status) {
-  const db = load();
-  const booking = db.bookings.find((b) => b.order_id === order_id);
-  if (booking) {
-    booking.status = status;
-    save(db);
-    console.log("RIDE STATUS UPDATED:", order_id, status);
-  }
+async function recordPayment(orderId, razorpayPaymentId, amount) {
+  const booking = await prisma.booking.findUnique({ where: { orderId } });
+  if (!booking) return;
+
+  await prisma.payment.upsert({
+    where: { razorpayOrderId: orderId },
+    update: { razorpayPaymentId, status: "CAPTURED" },
+    create: {
+      razorpayOrderId: orderId,
+      razorpayPaymentId,
+      bookingId: booking.id,
+      amount: amount || booking.amount,
+      status: "CAPTURED",
+    },
+  });
 }
 
-function getBookings() {
-  return load().bookings;
+async function getBookings() {
+  return prisma.booking.findMany({
+    orderBy: { createdAt: "desc" },
+    include: { payment: true },
+  });
 }
 
-module.exports = { createBooking, confirmBooking, failBooking, updateRideStatus, getBookings };
+async function getBookingByOrderId(orderId) {
+  return prisma.booking.findUnique({
+    where: { orderId },
+    include: { payment: true },
+  });
+}
+
+module.exports = { createBooking, confirmBooking, failBooking, recordPayment, getBookings, getBookingByOrderId };

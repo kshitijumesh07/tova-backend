@@ -6,10 +6,37 @@ datasource db {
   provider = "postgresql"
 }
 
+model User {
+  id        String    @id @default(uuid())
+  phone     String    @unique
+  name      String?
+  createdAt DateTime  @default(now())
+  bookings  Booking[]
+}
+
 model Booking {
-  id         Int      @id @default(autoincrement())
-  order_id   String   @unique
-  payment_id String?
-  status     String
-  created_at DateTime @default(now())
+  id          String    @id @default(uuid())
+  orderId     String    @unique
+  phone       String
+  rideId      String
+  pickup      String?
+  drop        String?
+  amount      Int       @default(5000)
+  capacity    Int       @default(10)
+  status      String    @default("CREATED")
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+  user        User      @relation(fields: [phone], references: [phone])
+  payment     Payment?
+}
+
+model Payment {
+  id                  String   @id @default(uuid())
+  razorpayOrderId     String   @unique
+  razorpayPaymentId   String?
+  bookingId           String   @unique
+  amount              Int
+  status              String   @default("PENDING")
+  createdAt           DateTime @default(now())
+  booking             Booking  @relation(fields: [bookingId], references: [id])
 }

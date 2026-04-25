@@ -15,38 +15,30 @@ const RIDES = {
 router.post("/create", async (req, res) => {
   const key = process.env.RAZORPAY_KEY;
   const secret = process.env.RAZORPAY_SECRET;
-
-  if (!key || !secret) {
-    return res.status(500).json({ error: "ENV missing: RAZORPAY_KEY or RAZORPAY_SECRET" });
-  }
+  if (!key || !secret) return res.status(500).json({ error: "ENV missing" });
 
   const { ride_id, user_id, amount } = req.body;
 
-  // Item 4: look up real seat count from drivers for this ride
   const ride = RIDES[ride_id];
-  let seats = 99;
+  let capacity = 10;
   if (ride) {
-    const route = `${ride.from}-${ride.to}`;
-    const drivers = getAvailableDrivers(route, ride.time);
-    seats = drivers.reduce((sum, d) => sum + d.seats, 0);
-    if (seats === 0) {
-      return res.status(409).json({ error: "No seats available for this ride" });
-    }
+    const drivers = getAvailableDrivers(`${ride.from}-${ride.to}`, ride.time);
+    capacity = drivers.reduce((sum, d) => sum + d.seats, 0) || 10;
+    if (capacity === 0) return res.status(409).json({ error: "No seats available for this ride" });
   }
 
   try {
     const razorpay = new Razorpay({ key_id: key, key_secret: secret });
-
     const order = await razorpay.orders.create({
-      amount: amount || (ride?.amount) || 5000,
+      amount: amount || ride?.amount || 5000,
       currency: "INR",
       receipt: "receipt_" + Date.now(),
       notes: { ride_id: ride_id || "", user_id: user_id || "" },
     });
 
-    createBooking(order.id, ride_id, user_id, seats);
+    await createBooking(order.id, ride_id, user_id, capacity);
 
-    console.log("ORDER CREATED:", order.id, "| ride:", ride_id, "| user:", user_id, "| seats available:", seats);
+    console.log("ORDER CREATED:", order.id, "| ride:", ride_id, "| user:", user_id, "| capacity:", capacity);
     return res.json({ id: order.id, amount: order.amount, currency: order.currency });
   } catch (err) {
     const message = err?.error?.description || err?.message || JSON.stringify(err);

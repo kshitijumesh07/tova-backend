@@ -1,12 +1,11 @@
 const express = require("express");
 const crypto = require("crypto");
-const { confirmBooking, failBooking } = require("../models/bookingStore");
+const { confirmBooking, failBooking, getBookingByOrderId, recordPayment } = require("../models/bookingStore");
 const { notifyUser } = require("../services/notify");
 
 const router = express.Router();
 
-// Step 3: webhook = single source of truth for payment confirmation
-router.post("/razorpay", express.raw({ type: "application/json" }), (req, res) => {
+router.post("/razorpay", express.raw({ type: "application/json" }), async (req, res) => {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
   const signature = req.headers["x-razorpay-signature"];
 
@@ -15,47 +14,37 @@ router.post("/razorpay", express.raw({ type: "application/json" }), (req, res) =
     return res.status(400).json({ error: "Invalid signature" });
   }
 
-  const expectedSignature = crypto
-    .createHmac("sha256", secret)
-    .update(req.body)
-    .digest("hex");
-
-  if (signature !== expectedSignature) {
+  const expected = crypto.createHmac("sha256", secret).update(req.body).digest("hex");
+  if (signature !== expected) {
     console.warn("Webhook: signature mismatch — ignored");
     return res.status(400).json({ error: "Invalid signature" });
   }
 
   let event;
-  try {
-    event = JSON.parse(req.body.toString());
-  } catch {
-    console.warn("Webhook: invalid JSON body — ignored");
-    return res.status(400).json({ error: "Bad body" });
-  }
+  try { event = JSON.parse(req.body.toString()); }
+  catch { return res.status(400).json({ error: "Bad body" }); }
 
-  const eventType = event?.event;
-  const notes = event?.payload?.payment?.entity?.notes || {};
-  const { ride_id, user_id } = notes;
-  const order_id = event?.payload?.payment?.entity?.order_id;
+  const entity = event?.payload?.payment?.entity || {};
+  const order_id = entity.order_id;
+  const payment_id = entity.id;
+  const notes = entity.notes || {};
+  const phone = notes.user_id || "";
 
-  if (eventType === "payment.captured") {
-    const result = confirmBooking(order_id, user_id);
+  if (event.event === "payment.captured") {
+    const result = await confirmBooking(order_id);
     if (result?.error) {
       console.warn("Webhook confirm failed:", result.error);
-      notifyUser(user_id, `Booking failed: ${result.error}. Please contact support.`);
+      notifyUser(phone, `Booking failed: ${result.error}.`);
       return res.status(200).json({ status: "rejected", reason: result.error });
     }
-    console.log("BOOKING CONFIRMED via webhook:", order_id, "| user:", user_id);
-    // Step 4: structured WhatsApp confirmation
-    notifyUser(user_id, `Your TOVA ride is confirmed! Order: ${order_id}. See you at the stop.`);
+    await recordPayment(order_id, payment_id, entity.amount);
+    console.log("BOOKING CONFIRMED via webhook:", order_id, "| user:", phone);
+    notifyUser(phone, `Your TOVA ride is confirmed! Order: ${order_id}. See you at the stop.`);
 
-  } else if (eventType === "payment.failed") {
-    failBooking(order_id, user_id);
-    console.log("PAYMENT FAILED — booking marked FAILED:", order_id);
-    notifyUser(user_id, `Payment failed for order ${order_id}. Please try again.`);
-
-  } else {
-    console.log("Webhook: unhandled event type:", eventType);
+  } else if (event.event === "payment.failed") {
+    await failBooking(order_id);
+    console.log("PAYMENT FAILED:", order_id);
+    notifyUser(phone, `Payment failed for order ${order_id}. Please try again.`);
   }
 
   return res.status(200).json({ status: "ok" });
