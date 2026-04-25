@@ -34,10 +34,27 @@ router.post("/incoming", (req, res) => {
   const change = entry?.changes?.[0]?.value;
   const msg = change?.messages?.[0];
 
-  if (!msg || msg.type !== "text") return;
+  if (!msg || (msg.type !== "text" && msg.type !== "location")) return;
 
   const phone = msg.from; // e.g. "919390537737"
-  const text = (msg.text?.body || "").trim();
+
+  let text = "";
+  let locationMeta = null;
+
+  if (msg.type === "location") {
+    const loc = msg.location || {};
+    locationMeta = {
+      latitude:  loc.latitude,
+      longitude: loc.longitude,
+      name:      loc.name    || null,
+      address:   loc.address || null,
+    };
+    // Build a human-readable label for the session
+    text = loc.name || loc.address || `${loc.latitude},${loc.longitude}`;
+  } else {
+    text = (msg.text?.body || "").trim();
+  }
+
   const lower = text.toLowerCase();
 
   console.log("WA INCOMING:", phone, "|", text);
@@ -56,6 +73,7 @@ router.post("/incoming", (req, res) => {
       reply = "Please enter a valid pickup location.";
     } else {
       session.pickup = text;
+      if (locationMeta) session.pickupCoords = locationMeta;
       session.step = "AWAITING_DESTINATION";
       reply = "Enter your destination:";
     }
@@ -65,6 +83,7 @@ router.post("/incoming", (req, res) => {
       reply = "Please enter a valid destination.";
     } else {
       session.destination = text;
+      if (locationMeta) session.destinationCoords = locationMeta;
       session.step = "AWAITING_TIME";
       reply = "Enter preferred time (e.g. 8:00 AM or 6:00 PM):";
     }
