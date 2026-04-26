@@ -229,16 +229,86 @@ router.patch("/trip/:tripId/cancel", async (req, res) => {
   const host = await prisma.host.findUnique({ where: { phone } });
   if (!host) return res.status(404).json({ error: "Host not found" });
 
-  const trip = await prisma.trip.findUnique({ where: { id: req.params.tripId } });
-  if (!trip) return res.status(404).json({ error: "Trip not found" });
+  const trip = await prisma.trip.findUnique({
+    where:   { id: req.params.tripId },
+    include: { bookings: { where: { status: "CONFIRMED" }, select: { phone: true } } },
+  });
+  if (!trip)              return res.status(404).json({ error: "Trip not found" });
   if (trip.hostId !== host.id) return res.status(403).json({ error: "Not your trip" });
 
-  await prisma.trip.update({
-    where: { id: req.params.tripId },
-    data:  { status: "CANCELLED" },
+  await prisma.$transaction([
+    prisma.trip.update({
+      where: { id: req.params.tripId },
+      data:  { status: "CANCELLED" },
+    }),
+    prisma.booking.updateMany({
+      where: { tripId: req.params.tripId, status: "CONFIRMED" },
+      data:  { status: "REFUND_PENDING" },
+    }),
+  ]);
+
+  // Notify affected riders asynchronously — don't block the response
+  for (const b of trip.bookings) {
+    notifyUser(
+      b.phone,
+      `Your TOVA ride on ${trip.tripDate.toDateString()} has been cancelled by the host. ` +
+      `Your payment will be refunded within 48 hours. Sorry for the inconvenience.\n\n` +
+      `Contact support: https://wa.me/919390537737`,
+    ).catch(() => {});
+  }
+
+  console.log("[host] trip cancelled:", req.params.tripId, "— affected riders:", trip.bookings.length);
+  res.json({ success: true, affectedRiders: trip.bookings.length });
+});
+
+// ── GET /host/earnings?phone= ─────────────────────────────────────────────────
+
+router.get("/earnings", async (req, res) => {
+  const phone = (req.query.phone || "").replace(/^\+/, "");
+  if (!phone) return res.status(400).json({ error: "phone required" });
+
+  const host = await prisma.host.findUnique({ where: { phone } });
+  if (!host) return res.status(404).json({ error: "Host not found" });
+
+  const trips = await prisma.trip.findMany({
+    where:   { hostId: host.id },
+    include: {
+      route:    { select: { fromName: true, toName: true } },
+      bookings: {
+        where:  { status: "CONFIRMED" },
+        select: { id: true, amount: true, confirmedAt: true },
+      },
+    },
+    orderBy: { tripDate: "desc" },
   });
 
-  res.json({ success: true });
+  let totalPaise = 0;
+  const breakdown = trips.map((t) => {
+    const ridePaise = t.bookings.reduce((s, b) => s + b.amount, 0);
+    totalPaise += ridePaise;
+    return {
+      tripId:        t.id,
+      date:          t.tripDate,
+      from:          t.route.fromName,
+      to:            t.route.toName,
+      departureTime: t.departureTime,
+      riders:        t.bookings.length,
+      revenueInr:    Math.round(ridePaise / 100),
+      status:        t.status,
+    };
+  });
+
+  const totalRiders = trips.reduce((s, t) => s + t.bookings.length, 0);
+
+  res.json({
+    totalRiders,
+    totalRevenueInr:   Math.round(totalPaise / 100),
+    platformFeeInr:    0,
+    netEarningsInr:    Math.round(totalPaise / 100),
+    pendingPayoutInr:  Math.round(totalPaise / 100),
+    releasedPayoutInr: 0,
+    trips: breakdown,
+  });
 });
 
 module.exports = router;
