@@ -53,4 +53,47 @@ router.post("/create", async (req, res) => {
   }
 });
 
+// ── POST /payment/demo ────────────────────────────────────────────────────────
+// Creates a real Razorpay order for the demo checkout page (Razorpay reviewer flow)
+
+router.post("/demo", async (req, res) => {
+  const key    = process.env.RAZORPAY_KEY;
+  const secret = process.env.RAZORPAY_SECRET;
+  if (!key || !secret) return res.status(500).json({ error: "ENV missing" });
+
+  const { name = "Demo User", phone = "919000000000" } = req.body;
+  const cleanPhone = phone.replace(/^\+/, "");
+
+  try {
+    const razorpay = new Razorpay({ key_id: key, key_secret: secret });
+    const order = await razorpay.orders.create({
+      amount:   12900,
+      currency: "INR",
+      receipt:  "demo_" + Date.now(),
+      notes:    { demo: "true", user_id: cleanPhone },
+    });
+
+    await prisma.user.upsert({
+      where:  { phone: cleanPhone },
+      update: {},
+      create: { phone: cleanPhone, name },
+    });
+
+    await prisma.booking.create({
+      data: {
+        orderId:  order.id,
+        rideId:   "demo",
+        phone:    cleanPhone,
+        capacity: 4,
+        status:   "CREATED",
+      },
+    });
+
+    res.json({ id: order.id, amount: order.amount, currency: order.currency });
+  } catch (err) {
+    const msg = err?.error?.description || err?.message || "Order failed";
+    res.status(500).json({ error: msg });
+  }
+});
+
 module.exports = router;
