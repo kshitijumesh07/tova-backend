@@ -85,6 +85,18 @@ model Payment {
   booking             Booking   @relation(fields: [bookingId], references: [id])
 }
 
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  razorpayId  String   @unique        // event.id — idempotency key
+  event       String                  // payment.captured, payment.failed, refund.processed …
+  orderId     String?
+  paymentId   String?
+  status      String   @default("PROCESSED") // PROCESSED | FAILED | SKIPPED
+  error       String?
+  raw         String                  // full JSON for audit
+  createdAt   DateTime @default(now())
+}
+
 model Payout {
   id          String    @id @default(cuid())
   hostId      String

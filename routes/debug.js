@@ -514,6 +514,38 @@ router.patch("/payout/:id", async (req, res) => {
   }
 });
 
+// ── GET /debug/webhooks ───────────────────────────────────────────────────────
+
+router.get("/webhooks", async (req, res) => {
+  try {
+    const where = {};
+    if (req.query.status)  where.status  = req.query.status.toUpperCase();
+    if (req.query.event)   where.event   = req.query.event;
+    if (req.query.orderId) where.orderId = req.query.orderId;
+
+    const rows = await prisma.webhookEvent.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: parseLimit(req.query.limit, 100),
+      select: {
+        id: true, razorpayId: true, event: true,
+        orderId: true, paymentId: true,
+        status: true, error: true, createdAt: true,
+      },
+    });
+
+    const summary = {
+      processed: await prisma.webhookEvent.count({ where: { status: "PROCESSED" } }),
+      failed:    await prisma.webhookEvent.count({ where: { status: "FAILED" } }),
+      skipped:   await prisma.webhookEvent.count({ where: { status: "SKIPPED" } }),
+    };
+
+    res.json({ summary, count: rows.length, events: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /debug/notify — test WhatsApp send ───────────────────────────────────
 // Body: { phone: "919178...", message: "test" }
 
