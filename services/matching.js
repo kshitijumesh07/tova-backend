@@ -72,6 +72,7 @@ async function findTripsForRoute(fromName, toName, date = new Date()) {
     hostName: t.host.name,
     from:     t.route.fromName,
     to:       t.route.toName,
+    rideMode: t.rideMode,
   }));
 }
 

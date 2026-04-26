@@ -39,6 +39,7 @@ model Trip {
   seatsLeft     Int
   priceInr      Int
   status        String    @default("OPEN")
+  rideMode      String    @default("MIXED") // "MIXED" | "WOMEN_ONLY"
   createdAt     DateTime  @default(now())
   bookings      Booking[]
 }
@@ -47,6 +48,7 @@ model User {
   id        String    @id @default(uuid())
   phone     String    @unique
   name      String?
+  gender    String?   // "MALE" | "FEMALE" | "OTHER"
   createdAt DateTime  @default(now())
   bookings  Booking[]
 }

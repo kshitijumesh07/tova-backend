@@ -178,7 +178,7 @@ router.get("/trips", async (req, res) => {
 // ── POST /host/trip ───────────────────────────────────────────────────────────
 
 router.post("/trip", async (req, res) => {
-  const { hostPhone, routeId, departureTime, tripDate, totalSeats, totalCostInr } = req.body;
+  const { hostPhone, routeId, departureTime, tripDate, totalSeats, totalCostInr, rideMode = "MIXED" } = req.body;
   const phone = (hostPhone || "").replace(/^\+/, "");
 
   if (!phone || !routeId || !departureTime || !tripDate || !totalSeats || !totalCostInr) {
@@ -203,6 +203,7 @@ router.post("/trip", async (req, res) => {
       seatsLeft:     parseInt(totalSeats),
       priceInr,
       status:        "OPEN",
+      rideMode:      ["MIXED", "WOMEN_ONLY"].includes(rideMode) ? rideMode : "MIXED",
     },
     include: { route: { select: { fromName: true, toName: true } } },
   });
