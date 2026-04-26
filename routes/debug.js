@@ -70,23 +70,26 @@ function fmtBooking(b) {
 
 function fmtPayment(p) {
   return {
-    id:               p.id,
-    razorpayOrderId:  p.razorpayOrderId,
+    id:                p.id,
+    razorpayOrderId:   p.razorpayOrderId,
     razorpayPaymentId: p.razorpayPaymentId,
-    bookingPhone:     p.booking?.phone || null,
-    amountInr:        p.amount / 100,
-    status:           p.status,
-    createdAt:        p.createdAt,
+    razorpayRefundId:  p.razorpayRefundId  || null,
+    bookingPhone:      p.booking?.phone    || null,
+    amountInr:         Math.round(p.amount / 100),
+    status:            p.status,
+    refundedAt:        p.refundedAt        || null,
+    createdAt:         p.createdAt,
   };
 }
 
 function fmtUser(u) {
   return {
-    id:           u.id,
-    phone:        u.phone,
-    name:         u.name || null,
+    id:            u.id,
+    phone:         u.phone,
+    name:          u.name   || null,
+    gender:        u.gender || null,
     totalBookings: u._count?.bookings ?? 0,
-    createdAt:    u.createdAt,
+    createdAt:     u.createdAt,
   };
 }
 
@@ -339,6 +342,9 @@ router.get("/metrics", async (req, res) => {
       conversion_pct:  totalBookings > 0 ? Math.round((confirmedBookings / totalBookings) * 100) : 0,
       refund_rate_pct: confirmedBookings > 0 ? Math.round(((cancelledBookings + refundPending + refunded) / confirmedBookings) * 100) : 0,
       top_routes:      topRoutes.map((r) => ({ tripId: r.rideId, bookings: r._count.id })),
+      razorpay_mode:   (process.env.RAZORPAY_KEY || "").startsWith("rzp_test") ? "TEST"
+                     : (process.env.RAZORPAY_KEY || "").startsWith("rzp_live") ? "LIVE"
+                     : "UNKNOWN",
       generated_at:    new Date().toISOString(),
     });
   } catch (e) {

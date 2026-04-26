@@ -9,6 +9,11 @@ function razorpay() {
   return new Razorpay({ key_id: key, key_secret: secret });
 }
 
+function mode() {
+  const k = process.env.RAZORPAY_KEY || "";
+  return k.startsWith("rzp_test") ? "[TEST]" : k.startsWith("rzp_live") ? "[LIVE]" : "[UNKNOWN]";
+}
+
 // Process a single refund by Razorpay order ID.
 // Returns { success, refundId, amountInr } or { error } or { skipped, reason }.
 async function processRefund(orderId) {
@@ -57,12 +62,12 @@ async function processRefund(orderId) {
       `Your TOVA refund of ₹${Math.round(payment.amount / 100)} has been processed and will reflect in your account within 5–7 business days.`,
     ).catch(() => {});
 
-    console.log("[refund] ok:", orderId, "→", refund.id, `₹${Math.round(payment.amount / 100)}`);
+    console.log(`[refund] ${mode()} ok:`, orderId, "→", refund.id, `₹${Math.round(payment.amount / 100)}`);
     return { success: true, refundId: refund.id, amountInr: Math.round(payment.amount / 100) };
 
   } catch (err) {
     const msg = err?.error?.description || err?.message || "Refund API call failed";
-    console.error("[refund] failed:", orderId, msg);
+    console.error(`[refund] ${mode()} failed:`, orderId, msg);
     return { error: msg };
   }
 }
