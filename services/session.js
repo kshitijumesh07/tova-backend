@@ -97,4 +97,36 @@ async function clearOtp(phone) {
   delete fallback[key];
 }
 
-module.exports = { getSession, setSession, clearSession, setOtp, getOtp, clearOtp };
+// ── OTP rate limiting ─────────────────────────────────────────────────────────
+// Max 3 OTP requests per phone per 10 minutes.
+
+const RATE_PREFIX  = "tova:otp:rate:";
+const RATE_WINDOW  = 600; // seconds
+const RATE_LIMIT   = 3;
+const rateLimiter  = {}; // in-memory fallback
+
+async function checkOtpRateLimit(phone) {
+  const key = RATE_PREFIX + phone;
+
+  if (redis) {
+    try {
+      const count = await redis.incr(key);
+      if (count === 1) await redis.expire(key, RATE_WINDOW);
+      return count <= RATE_LIMIT;
+    } catch (err) {
+      console.error("[session] rate-limit check failed:", err.message);
+      return true; // allow on Redis error
+    }
+  }
+
+  const now = Date.now();
+  const rec = rateLimiter[key];
+  if (!rec || now > rec.expires) {
+    rateLimiter[key] = { count: 1, expires: now + RATE_WINDOW * 1000 };
+    return true;
+  }
+  rateLimiter[key].count++;
+  return rateLimiter[key].count <= RATE_LIMIT;
+}
+
+module.exports = { getSession, setSession, clearSession, setOtp, getOtp, clearOtp, checkOtpRateLimit };

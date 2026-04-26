@@ -1,6 +1,6 @@
 const express    = require("express");
 const prisma     = require("../services/db");
-const { setOtp, getOtp, clearOtp } = require("../services/session");
+const { setOtp, getOtp, clearOtp, checkOtpRateLimit } = require("../services/session");
 const { notifyUser } = require("../services/notify");
 
 const router = express.Router();
@@ -15,6 +15,10 @@ router.post("/register/request", async (req, res) => {
 
   if (!phone || !name || !vehicle || !comfortSeats) {
     return res.status(400).json({ error: "name, phone, vehicle, comfortSeats required" });
+  }
+
+  if (!(await checkOtpRateLimit(phone))) {
+    return res.status(429).json({ error: "Too many OTP requests. Try again in 10 minutes." });
   }
 
   const existing = await prisma.host.findUnique({ where: { phone } });
@@ -72,6 +76,10 @@ router.post("/register/verify", async (req, res) => {
 router.post("/request-otp", async (req, res) => {
   const phone = (req.body.phone || "").replace(/^\+/, "");
   if (!phone) return res.status(400).json({ error: "phone required" });
+
+  if (!(await checkOtpRateLimit(phone))) {
+    return res.status(429).json({ error: "Too many OTP requests. Try again in 10 minutes." });
+  }
 
   const host = await prisma.host.findUnique({ where: { phone } });
   if (!host) return res.status(404).json({ error: "Host not found. Contact TOVA to register." });

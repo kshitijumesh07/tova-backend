@@ -31,6 +31,20 @@ router.post("/create", async (req, res) => {
     return res.status(409).json({ error: "No seats available for this trip" });
   }
 
+  // Prevent hosts from booking their own trips
+  const hostRecord = await prisma.host.findUnique({ where: { phone } });
+  if (hostRecord && trip.hostId === hostRecord.id) {
+    return res.status(403).json({ error: "Hosts cannot book their own trips." });
+  }
+
+  // Prevent duplicate bookings for the same trip
+  const duplicate = await prisma.booking.findFirst({
+    where: { phone, tripId: ride_id, status: { in: ["CREATED", "CONFIRMED"] } },
+  });
+  if (duplicate) {
+    return res.status(409).json({ error: "You already have an active booking for this trip." });
+  }
+
   const amountPaise = trip.priceInr * 100;
 
   try {

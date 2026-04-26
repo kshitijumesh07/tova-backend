@@ -1,6 +1,6 @@
 const express  = require("express");
 const prisma   = require("../services/db");
-const { setOtp, getOtp, clearOtp } = require("../services/session");
+const { setOtp, getOtp, clearOtp, checkOtpRateLimit } = require("../services/session");
 const { notifyUser } = require("../services/notify");
 
 const router = express.Router();
@@ -13,6 +13,10 @@ const rKey = (phone) => `rider:${phone}`;
 router.post("/request-otp", async (req, res) => {
   const phone = (req.body.phone || "").replace(/^\+/, "");
   if (!phone) return res.status(400).json({ error: "phone required" });
+
+  if (!(await checkOtpRateLimit(phone))) {
+    return res.status(429).json({ error: "Too many OTP requests. Try again in 10 minutes." });
+  }
 
   const user = await prisma.user.findUnique({ where: { phone } });
   if (!user) {

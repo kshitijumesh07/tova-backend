@@ -14,6 +14,7 @@ model Host {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   trips     Trip[]
+  payouts   Payout[]
 }
 
 model Route {
@@ -72,12 +73,30 @@ model Booking {
 }
 
 model Payment {
-  id                  String   @id @default(uuid())
-  razorpayOrderId     String   @unique
+  id                  String    @id @default(uuid())
+  razorpayOrderId     String    @unique
   razorpayPaymentId   String?
-  bookingId           String   @unique
+  razorpayRefundId    String?
+  bookingId           String    @unique
   amount              Int
-  status              String   @default("PENDING")
-  createdAt           DateTime @default(now())
-  booking             Booking  @relation(fields: [bookingId], references: [id])
+  status              String    @default("PENDING")
+  createdAt           DateTime  @default(now())
+  refundedAt          DateTime?
+  booking             Booking   @relation(fields: [bookingId], references: [id])
+}
+
+model Payout {
+  id          String    @id @default(cuid())
+  hostId      String
+  host        Host      @relation(fields: [hostId], references: [id])
+  periodStart DateTime
+  periodEnd   DateTime
+  amountInr   Int
+  riderCount  Int       @default(0)
+  tripCount   Int       @default(0)
+  status      String    @default("PENDING")
+  reference   String?
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  notes       String?
 }

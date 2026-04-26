@@ -147,43 +147,6 @@ router.get("/users", async (req, res) => {
   }
 });
 
-// ── GET /debug/metrics ────────────────────────────────────────────────────────
-
-router.get("/metrics", async (req, res) => {
-  try {
-    const [total, confirmed, failed, pending, totalUsers] = await Promise.all([
-      prisma.booking.count(),
-      prisma.booking.count({ where: { status: "CONFIRMED" } }),
-      prisma.booking.count({ where: { status: "FAILED" } }),
-      prisma.booking.count({ where: { status: "CREATED" } }),
-      prisma.user.count(),
-    ]);
-
-    const [revenue, todayBookings, todayRevenue] = await Promise.all([
-      prisma.payment.aggregate({ where: { status: "CAPTURED" }, _sum: { amount: true } }),
-      prisma.booking.count({ where: { status: "CONFIRMED", confirmedAt: { gte: todayStart() } } }),
-      prisma.payment.aggregate({
-        where: { status: "CAPTURED", createdAt: { gte: todayStart() } },
-        _sum:  { amount: true },
-      }),
-    ]);
-
-    res.json({
-      bookings: { total, confirmed, failed, pending },
-      users:    { total: totalUsers },
-      revenue:  {
-        all_time_inr: Math.round((revenue._sum.amount || 0) / 100),
-        today_inr:    Math.round((todayRevenue._sum.amount || 0) / 100),
-      },
-      today:    { confirmed: todayBookings },
-      conversion_pct: total > 0 ? Math.round((confirmed / total) * 100) : 0,
-      generated_at: new Date().toISOString(),
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // ── GET /debug/latest ─────────────────────────────────────────────────────────
 
 router.get("/latest", async (req, res) => {
@@ -299,6 +262,250 @@ router.get("/resend/:orderId", async (req, res) => {
   console.log("[resend] sending to:", booking.phone);
   await notifyUser(booking.phone, `Booking confirmed!\n${line}\n\nSee you at the pickup stop. Type 'hi' to book another ride.`);
   res.json({ sent: true, to: booking.phone, message: line });
+});
+
+// ── GET /debug/metrics ────────────────────────────────────────────────────────
+// Replaces the original /debug/metrics with richer operational data.
+
+router.get("/metrics", async (req, res) => {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalBookings, confirmedBookings, failedBookings, pendingBookings,
+      cancelledBookings, refundPending, refunded,
+      totalUsers, activeRiders,
+      revenue, todayBookings, todayRevenue,
+      totalTrips, openTrips,
+    ] = await Promise.all([
+      prisma.booking.count(),
+      prisma.booking.count({ where: { status: "CONFIRMED" } }),
+      prisma.booking.count({ where: { status: "FAILED" } }),
+      prisma.booking.count({ where: { status: "CREATED" } }),
+      prisma.booking.count({ where: { status: "CANCELLED" } }),
+      prisma.booking.count({ where: { status: "REFUND_PENDING" } }),
+      prisma.booking.count({ where: { status: "REFUNDED" } }),
+      prisma.user.count(),
+      prisma.user.count({
+        where: { bookings: { some: { createdAt: { gte: thirtyDaysAgo } } } },
+      }),
+      prisma.payment.aggregate({ where: { status: "CAPTURED" }, _sum: { amount: true } }),
+      prisma.booking.count({ where: { status: "CONFIRMED", confirmedAt: { gte: todayStart() } } }),
+      prisma.payment.aggregate({
+        where: { status: "CAPTURED", createdAt: { gte: todayStart() } },
+        _sum:  { amount: true },
+      }),
+      prisma.trip.count(),
+      prisma.trip.count({ where: { status: "OPEN" } }),
+    ]);
+
+    // Fill rate: confirmed seats / total seats on non-cancelled trips
+    const seatStats = await prisma.trip.aggregate({
+      where:  { status: { not: "CANCELLED" } },
+      _sum:   { totalSeats: true, seatsLeft: true },
+    });
+    const totalSeats  = seatStats._sum.totalSeats || 0;
+    const seatsBooked = totalSeats - (seatStats._sum.seatsLeft || 0);
+    const fillRate    = totalSeats > 0 ? Math.round((seatsBooked / totalSeats) * 100) : 0;
+
+    // Repeat riders: users with more than one confirmed booking
+    const repeatRiders = await prisma.user.count({
+      where: { bookings: { some: { status: "CONFIRMED" } } },
+    });
+    // Note: this is users who have at least one confirmed — good enough for pilot metrics.
+
+    // Top 5 routes by confirmed booking count
+    const topRoutes = await prisma.booking.groupBy({
+      by:      ["rideId"],
+      where:   { status: "CONFIRMED", tripId: { not: null } },
+      _count:  { id: true },
+      orderBy: { _count: { id: "desc" } },
+      take:    5,
+    });
+
+    res.json({
+      bookings: {
+        total: totalBookings, confirmed: confirmedBookings,
+        failed: failedBookings, pending: pendingBookings,
+        cancelled: cancelledBookings, refund_pending: refundPending, refunded,
+      },
+      users:       { total: totalUsers, active_30d: activeRiders, repeat: repeatRiders },
+      trips:       { total: totalTrips, open: openTrips, fill_rate_pct: fillRate },
+      revenue: {
+        all_time_inr: Math.round((revenue._sum.amount || 0) / 100),
+        today_inr:    Math.round((todayRevenue._sum.amount || 0) / 100),
+      },
+      today:           { confirmed: todayBookings },
+      conversion_pct:  totalBookings > 0 ? Math.round((confirmedBookings / totalBookings) * 100) : 0,
+      refund_rate_pct: confirmedBookings > 0 ? Math.round(((cancelledBookings + refundPending + refunded) / confirmedBookings) * 100) : 0,
+      top_routes:      topRoutes.map((r) => ({ tripId: r.rideId, bookings: r._count.id })),
+      generated_at:    new Date().toISOString(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Refund operations ─────────────────────────────────────────────────────────
+
+const { processRefund, processBatchRefunds } = require("../services/refund");
+
+// GET /debug/refunds — list bookings awaiting refund
+router.get("/refunds", async (req, res) => {
+  try {
+    const rows = await prisma.booking.findMany({
+      where:   { status: { in: ["REFUND_PENDING", "REFUNDED"] } },
+      include: { payment: { select: { amount: true, razorpayPaymentId: true, razorpayRefundId: true, status: true, refundedAt: true } } },
+      orderBy: { createdAt: "desc" },
+      take:    parseLimit(req.query.limit, 100),
+    });
+    res.json({
+      pending:  rows.filter((r) => r.status === "REFUND_PENDING").length,
+      refunded: rows.filter((r) => r.status === "REFUNDED").length,
+      rows: rows.map((b) => ({
+        orderId:          b.orderId,
+        phone:            b.phone,
+        status:           b.status,
+        amountInr:        Math.round((b.payment?.amount || b.amount) / 100),
+        razorpayPaymentId: b.payment?.razorpayPaymentId || null,
+        razorpayRefundId:  b.payment?.razorpayRefundId  || null,
+        refundedAt:        b.payment?.refundedAt || null,
+        createdAt:         b.createdAt,
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /debug/refund/:orderId — trigger single refund
+router.post("/refund/:orderId", async (req, res) => {
+  try {
+    const result = await processRefund(req.params.orderId);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /debug/refunds/batch — process all REFUND_PENDING
+router.post("/refunds/batch", async (req, res) => {
+  try {
+    const result = await processBatchRefunds();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Payout ledger ─────────────────────────────────────────────────────────────
+
+// GET /debug/payouts?hostId= — list payouts
+router.get("/payouts", async (req, res) => {
+  try {
+    const where = {};
+    if (req.query.hostId) where.hostId = req.query.hostId;
+    if (req.query.status) where.status = req.query.status.toUpperCase();
+
+    const payouts = await prisma.payout.findMany({
+      where,
+      include: { host: { select: { name: true, phone: true } } },
+      orderBy: { createdAt: "desc" },
+      take:    parseLimit(req.query.limit, 100),
+    });
+
+    res.json({
+      count: payouts.length,
+      payouts: payouts.map((p) => ({
+        id:           p.id,
+        host:         p.host.name,
+        phone:        p.host.phone,
+        periodStart:  p.periodStart,
+        periodEnd:    p.periodEnd,
+        amountInr:    p.amountInr,
+        riderCount:   p.riderCount,
+        tripCount:    p.tripCount,
+        status:       p.status,
+        reference:    p.reference,
+        processedAt:  p.processedAt,
+        notes:        p.notes,
+        createdAt:    p.createdAt,
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /debug/payout — create payout record for a host
+// Body: { hostPhone, periodStart, periodEnd, amountInr, notes? }
+router.post("/payout", async (req, res) => {
+  const { hostPhone, periodStart, periodEnd, amountInr, notes } = req.body;
+  const phone = (hostPhone || "").replace(/^\+/, "");
+
+  if (!phone || !periodStart || !periodEnd || !amountInr) {
+    return res.status(400).json({ error: "hostPhone, periodStart, periodEnd, amountInr required" });
+  }
+
+  try {
+    const host = await prisma.host.findUnique({ where: { phone } });
+    if (!host) return res.status(404).json({ error: "Host not found" });
+
+    // Auto-compute riderCount and tripCount for the period
+    const [tripCount, riderCount] = await Promise.all([
+      prisma.trip.count({
+        where: { hostId: host.id, tripDate: { gte: new Date(periodStart), lte: new Date(periodEnd) } },
+      }),
+      prisma.booking.count({
+        where: {
+          status: "CONFIRMED",
+          trip:   { hostId: host.id, tripDate: { gte: new Date(periodStart), lte: new Date(periodEnd) } },
+        },
+      }),
+    ]);
+
+    const payout = await prisma.payout.create({
+      data: {
+        hostId:      host.id,
+        periodStart: new Date(periodStart),
+        periodEnd:   new Date(periodEnd),
+        amountInr:   parseInt(amountInr),
+        riderCount,
+        tripCount,
+        status:      "PENDING",
+        notes:       notes || null,
+      },
+    });
+
+    res.json({ id: payout.id, status: payout.status, amountInr: payout.amountInr });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /debug/payout/:id — update payout status + reference
+// Body: { status: "PROCESSING"|"PAID", reference? }
+router.patch("/payout/:id", async (req, res) => {
+  const { status, reference } = req.body;
+  const allowed = ["PENDING", "PROCESSING", "PAID"];
+  if (!status || !allowed.includes(status.toUpperCase())) {
+    return res.status(400).json({ error: `status must be one of: ${allowed.join(", ")}` });
+  }
+
+  try {
+    const updated = await prisma.payout.update({
+      where: { id: req.params.id },
+      data:  {
+        status:      status.toUpperCase(),
+        reference:   reference || undefined,
+        processedAt: status.toUpperCase() === "PAID" ? new Date() : undefined,
+      },
+    });
+    res.json({ id: updated.id, status: updated.status, processedAt: updated.processedAt });
+  } catch (e) {
+    if (e.code === "P2025") return res.status(404).json({ error: "Payout not found" });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── POST /debug/notify — test WhatsApp send ───────────────────────────────────
