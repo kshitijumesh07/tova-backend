@@ -3,6 +3,8 @@ const prisma   = require("../services/db");
 const { getPickupZones, getDestinationsFor, findTripsForRoute } = require("../services/matching");
 const { notifyUser }                                            = require("../services/notify");
 const { getSession, setSession, clearSession }                  = require("../services/session");
+const { getLatestConfirmedBooking }                             = require("../models/bookingStore");
+const { processRefund }                                         = require("../services/refund");
 
 const router = express.Router();
 
@@ -73,10 +75,10 @@ router.post("/incoming", async (req, res) => {
     if (!gender) {
       // First-time user — ask gender once
       await setSession(phone, { step: "GENDER" });
-      reply = "Welcome to TOVA!\n\nBefore we start, are you:\n1. Female\n2. Male\n3. Prefer not to say";
+      reply = "👋 Hello! Welcome to TOVA — Hyderabad's verified daily commute service.\n\nTo match you with the right rides, could you tell us a little about yourself?\n\nAre you:\n1. A woman\n2. A man\n3. Prefer not to say\n\nReply with 1, 2, or 3.";
     } else {
       await setSession(phone, { step: "DIRECTION", gender });
-      reply = "Welcome back to TOVA!\n\n1. Going to Work\n2. Returning Home";
+      reply = "👋 Welcome back to TOVA! Great to see you again.\n\nAre you commuting today?\n1. Going to Work\n2. Returning Home\n\nReply with 1 or 2.";
     }
 
   // ── Gender (first time only) ──────────────────────────────────────────────
@@ -84,31 +86,31 @@ router.post("/incoming", async (req, res) => {
   } else if (session.step === "GENDER") {
     const map = { "1": "FEMALE", "2": "MALE", "3": "OTHER" };
     if (!map[text]) {
-      reply = "Please reply 1, 2, or 3.\n\n1. Female\n2. Male\n3. Prefer not to say";
+      reply = "Just reply with 1, 2, or 3 — we'll take it from there! 😊\n\n1. A woman\n2. A man\n3. Prefer not to say";
     } else {
       const gender = map[text];
       await saveUserGender(phone, gender);
       await setSession(phone, { step: "DIRECTION", gender });
-      reply = "Got it!\n\n1. Going to Work\n2. Returning Home";
+      reply = "Perfect, thank you! 🙏\n\nNow, are you commuting today?\n1. Going to Work\n2. Returning Home\n\nReply with 1 or 2.";
     }
 
   // ── Step 1: direction ────────────────────────────────────────────────────
 
   } else if (session.step === "DIRECTION") {
     if (text !== "1" && text !== "2") {
-      reply = "Please reply 1 or 2.\n\n1. Going to Work\n2. Returning Home";
+      reply = "Please reply with 1 or 2:\n\n1. Going to Work\n2. Returning Home";
     } else {
       session.direction = text === "1" ? "work" : "return";
 
       const zones = await getPickupZones();
       if (zones.length === 0) {
         await clearSession(phone);
-        reply = "No active routes today. Type 'hi' to try again later.";
+        reply = "Sorry, there are no active routes today. 😔\n\nPlease check back tomorrow or type *hi* to try again later.";
       } else {
         session.zones = zones;
         session.step  = "PICKUP_ZONE";
         await setSession(phone, session);
-        reply = `Choose your pickup zone:\n${numberedList(zones)}`;
+        reply = `Got it! 👍 Where will you be boarding from?\n\n${numberedList(zones)}\n\nReply with the number of your pickup area.`;
       }
     }
 
@@ -119,19 +121,19 @@ router.post("/incoming", async (req, res) => {
     const zones = session.zones || [];
 
     if (isNaN(idx) || idx < 0 || idx >= zones.length) {
-      reply = `Please reply with a number 1–${zones.length}.\n${numberedList(zones)}`;
+      reply = `Please reply with a number between 1 and ${zones.length}:\n\n${numberedList(zones)}`;
     } else {
       session.pickupZone = zones[idx];
 
       const dests = await getDestinationsFor(session.pickupZone);
       if (dests.length === 0) {
         await clearSession(phone);
-        reply = "No destinations available from that zone. Type 'hi' to try again.";
+        reply = "Sorry, we don't have any destinations available from that area right now. 😔\n\nType *hi* to start over and pick a different zone.";
       } else {
         session.dests = dests;
         session.step  = "DESTINATION";
         await setSession(phone, session);
-        reply = `Pickup: ${session.pickupZone}\n\nChoose your destination:\n${numberedList(dests)}`;
+        reply = `Great! Pickup from *${session.pickupZone}* ✅\n\nWhere are you headed?\n\n${numberedList(dests)}\n\nReply with the number of your destination.`;
       }
     }
 
@@ -142,7 +144,7 @@ router.post("/incoming", async (req, res) => {
     const dests = session.dests || [];
 
     if (isNaN(idx) || idx < 0 || idx >= dests.length) {
-      reply = `Please reply with a number 1–${dests.length}.\n${numberedList(dests)}`;
+      reply = `Please reply with a number between 1 and ${dests.length}:\n\n${numberedList(dests)}`;
     } else {
       session.destination = dests[idx];
 
@@ -156,13 +158,13 @@ router.post("/incoming", async (req, res) => {
 
       if (rides.length === 0) {
         await clearSession(phone);
-        reply = "No rides available on this route today. Type 'hi' to start over.";
+        reply = "Sorry, there are no rides available on this route today. 😔\n\nType *hi* to start over and try a different route.";
       } else {
         session.foundRides = rides;
         session.step       = "SELECTING_RIDE";
         await setSession(phone, session);
         const list = rides.map((r, i) => `${i + 1}. ${rideLabel(r)}`).join("\n");
-        reply = `${session.pickupZone} → ${session.destination}\n\nAvailable rides:\n${list}\n\nReply with a number to book:`;
+        reply = `Here are the available rides from *${session.pickupZone}* → *${session.destination}*:\n\n${list}\n\nReply with the number of the ride you'd like to book. 🚗`;
       }
     }
 
@@ -173,18 +175,45 @@ router.post("/incoming", async (req, res) => {
     const rides = session.foundRides || [];
 
     if (isNaN(idx) || idx < 0 || idx >= rides.length) {
-      reply = `Please reply with a number 1–${rides.length}.`;
+      reply = `Please reply with a number between 1 and ${rides.length} to select your ride.`;
     } else {
       const ride = rides[idx];
       await clearSession(phone);
-      const link = `https://tova-web.vercel.app/checkout?ride=${ride.id}&user=${encodeURIComponent("+" + phone)}`;
-      reply = `Ride selected!\n${ride.time} | ₹${ride.price} | ${ride.seats} seat(s)\n\nTap to pay:\n${link}`;
+      const link = `https://www.gotova.in/checkout?ride=${ride.id}&user=${encodeURIComponent("+" + phone)}`;
+      reply = `Almost there! 🎉\n\nYou've selected:\n🕐 ${ride.time} | ₹${ride.price} | ${ride.seats} seat(s)\n\nTap the link below to confirm and pay securely:\n${link}\n\nSee you on the road! 🚗`;
+    }
+
+  // ── Cancel ───────────────────────────────────────────────────────────────
+
+  } else if (lower === "cancel") {
+    const booking = await getLatestConfirmedBooking(phone);
+    if (!booking) {
+      reply = "You don't have any active bookings to cancel. Type *hi* to book a ride.";
+    } else {
+      const route = booking.trip?.route;
+      const line  = route
+        ? `${route.fromName} → ${route.toName} at ${booking.trip.departureTime}`
+        : `Order ${booking.orderId}`;
+      await setSession(phone, { step: "CANCEL_CONFIRM", orderId: booking.orderId });
+      reply = `You have an upcoming booking:\n\n🚗 ${line}\n\nAre you sure you want to cancel and request a refund?\n\nType *confirm cancel* to proceed, or *hi* to go back.`;
+    }
+
+  } else if (session.step === "CANCEL_CONFIRM" && lower === "confirm cancel") {
+    const orderId = session.orderId;
+    await clearSession(phone);
+    const result = await processRefund(orderId);
+    if (result.error) {
+      reply = `Sorry, we couldn't process your cancellation: ${result.error}\n\nPlease contact support: https://wa.me/919390537737`;
+    } else if (result.skipped) {
+      reply = `This booking has already been refunded. Contact support if you haven't received it.`;
+    } else {
+      reply = `✅ Cancellation confirmed!\n\nRefund of ₹${result.amountInr} will reflect in your account within 5–7 business days.\n\nType *hi* to book a new ride.`;
     }
 
   // ── Fallback ─────────────────────────────────────────────────────────────
 
   } else {
-    reply = "Type 'hi' to start a new booking.";
+    reply = "Hi there! 👋 Type *hi* to start booking your TOVA ride.";
   }
 
   if (reply) notifyUser(phone, reply);

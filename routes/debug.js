@@ -191,6 +191,63 @@ router.get("/hosts", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── POST /debug/hosts/add ─────────────────────────────────────────────────────
+
+router.post("/hosts/add", async (req, res) => {
+  const { name, phone, vehicle } = req.body;
+  if (!name || !phone) return res.status(400).json({ error: "name and phone required" });
+  const p = phone.replace(/^\+/, "");
+  try {
+    const host = await prisma.host.upsert({
+      where:  { phone: p },
+      update: { name, vehicle: vehicle || undefined },
+      create: { name, phone: p, vehicle: vehicle || null },
+    });
+    console.log("HOST UPSERTED:", host.id, name, p);
+    return res.json({ success: true, host });
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /debug/trips/add ─────────────────────────────────────────────────────
+// Body: { hostPhone, fromName, toName, departureTime, tripDate, totalSeats, priceInr, rideMode? }
+
+router.post("/trips/add", async (req, res) => {
+  const { hostPhone, fromName, toName, departureTime, tripDate, totalSeats, priceInr, rideMode } = req.body;
+  if (!hostPhone || !fromName || !toName || !departureTime || !tripDate || !totalSeats || !priceInr) {
+    return res.status(400).json({ error: "Required: hostPhone, fromName, toName, departureTime, tripDate, totalSeats, priceInr" });
+  }
+  const p = hostPhone.replace(/^\+/, "");
+  try {
+    const host = await prisma.host.findUnique({ where: { phone: p } });
+    if (!host) return res.status(404).json({ error: `No host found with phone ${p}` });
+
+    const route = await prisma.route.upsert({
+      where:  { fromName_toName: { fromName: fromName.trim(), toName: toName.trim() } },
+      update: { active: true },
+      create: { fromName: fromName.trim(), toName: toName.trim(), active: true },
+    });
+
+    const seats = Number(totalSeats);
+    const trip  = await prisma.trip.create({
+      data: {
+        routeId:       route.id,
+        hostId:        host.id,
+        departureTime,
+        tripDate:      new Date(tripDate),
+        totalSeats:    seats,
+        seatsLeft:     seats,
+        priceInr:      Number(priceInr),
+        rideMode:      rideMode || "MIXED",
+        status:        "OPEN",
+      },
+      include: { route: true, host: { select: { name: true, phone: true } } },
+    });
+
+    console.log("TRIP CREATED:", trip.id, fromName, "→", toName, departureTime, tripDate);
+    return res.json({ success: true, trip });
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
 // ── PATCH /debug/host/:id/toggle ──────────────────────────────────────────────
 
 router.patch("/host/:id/toggle", async (req, res) => {

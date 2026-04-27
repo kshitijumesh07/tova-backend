@@ -148,6 +148,17 @@ async function handlePaymentCaptured({ orderId, paymentId, paymentEntity }) {
       `✅ Booking confirmed!\n\n${line}\n\nSee you at the pickup point. Reply *hi* to book your next ride.`,
     );
     console.log(`[webhook] confirmed + notified: ${orderId} → ${phone}`);
+
+    // Notify host
+    const hostPhone = booking?.trip?.host?.phone;
+    if (hostPhone) {
+      const riderDisplay = phone ? `+${phone}` : "Unknown";
+      notifyUser(
+        hostPhone.replace(/^\+/, ""),
+        `🚗 New booking!\n\nRider: ${riderDisplay}\nRoute: ${route?.fromName} → ${route?.toName}\nTime: ${booking.trip.departureTime}\nOrder: ${orderId}`,
+      ).catch(() => {});
+      console.log(`[webhook] host notified: ${hostPhone} for ${orderId}`);
+    }
   } else if (alreadyConfirmed) {
     console.log(`[webhook] idempotent confirm (already CONFIRMED): ${orderId}`);
   }

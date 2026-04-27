@@ -102,8 +102,16 @@ async function getBookings() {
 async function getBookingByOrderId(orderId) {
   return prisma.booking.findUnique({
     where:   { orderId },
-    include: { payment: true, trip: { include: { route: true } } },
+    include: { payment: true, trip: { include: { route: true, host: true } } },
   });
 }
 
-module.exports = { createBooking, confirmBooking, failBooking, recordPayment, getBookings, getBookingByOrderId };
+async function getLatestConfirmedBooking(phone) {
+  return prisma.booking.findFirst({
+    where:   { phone, status: "CONFIRMED" },
+    orderBy: { confirmedAt: "desc" },
+    include: { trip: { include: { route: true } } },
+  });
+}
+
+module.exports = { createBooking, confirmBooking, failBooking, recordPayment, getBookings, getBookingByOrderId, getLatestConfirmedBooking };
