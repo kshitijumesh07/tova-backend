@@ -70,12 +70,23 @@ router.post("/incoming", async (req, res) => {
   // ── Start / reset ────────────────────────────────────────────────────────
 
   if (lower === "hi" || lower === "hello" || lower === "start" || lower === "menu") {
+    // Invite-only gate — block unregistered users when flag is ON
+    const inviteFlag = await prisma.featureFlag.findUnique({ where: { key: "invite_only" } }).catch(() => null);
+    if (inviteFlag?.enabled) {
+      const existing = await prisma.user.findUnique({ where: { phone }, select: { id: true } });
+      if (!existing) {
+        reply = "👋 TOVA is currently open only to verified government employees in our pilot network.\n\nIf you're a govt employee and would like to join, please reach out:\nhttps://wa.me/919390537737";
+        if (reply) notifyUser(phone, reply);
+        return;
+      }
+    }
+
     const gender = await getUserGender(phone);
 
     if (!gender) {
       // First-time user — ask gender once
       await setSession(phone, { step: "GENDER" });
-      reply = "👋 Hello! Welcome to TOVA — Hyderabad's verified daily commute service.\n\nTo match you with the right rides, could you tell us a little about yourself?\n\nAre you:\n1. A woman\n2. A man\n3. Prefer not to say\n\nReply with 1, 2, or 3.";
+      reply = "👋 Hello! Welcome to TOVA — verified daily commute for government employees.\n\nTo match you with the right rides, could you tell us a little about yourself?\n\nAre you:\n1. A woman\n2. A man\n3. Prefer not to say\n\nReply with 1, 2, or 3.";
     } else {
       await setSession(phone, { step: "DIRECTION", gender });
       reply = "👋 Welcome back to TOVA! Great to see you again.\n\nAre you commuting today?\n1. Going to Work\n2. Returning Home\n\nReply with 1 or 2.";
@@ -183,6 +194,91 @@ router.post("/incoming", async (req, res) => {
       reply = `Almost there! 🎉\n\nYou've selected:\n🕐 ${ride.time} | ₹${ride.price} | ${ride.seats} seat(s)\n\nTap the link below to confirm and pay securely:\n${link}\n\nSee you on the road! 🚗`;
     }
 
+  // ── Verify identity ──────────────────────────────────────────────────────
+
+  } else if (lower === "verify" || lower === "verification") {
+    const user = await prisma.user.findUnique({ where: { phone }, select: { verificationStatus: true } });
+    if (user?.verificationStatus === "APPROVED") {
+      reply = "✅ Your account is already verified. You're good to go!\n\nType *hi* to book a ride.";
+    } else if (user?.verificationStatus === "PENDING") {
+      reply = "⏳ Your verification is already under review. We'll notify you once it's approved (usually 24–48 hrs).\n\nFor urgent queries: https://wa.me/919390537737";
+    } else if (user?.verificationStatus === "SUSPENDED") {
+      reply = "🚫 Your account has been suspended. Please contact support: https://wa.me/919390537737";
+    } else {
+      await setSession(phone, { step: "VERIFY_NAME" });
+      reply = "Let's verify your government employee status. 🪪\n\n*Step 1 of 5:* Please share your *full name* as it appears on your government ID.";
+    }
+
+  } else if (session.step === "VERIFY_NAME") {
+    if (text.length < 2) {
+      reply = "Please enter your full name to continue.";
+    } else {
+      session.verifyName = text;
+      session.step = "VERIFY_ROLE";
+      await setSession(phone, session);
+      reply = "*Step 2 of 5:* What is your government role?\n\n1. Teacher\n2. Lecturer\n3. Officer\n4. Staff\n5. Other\n\nReply with the number.";
+    }
+
+  } else if (session.step === "VERIFY_ROLE") {
+    const roleMap = { "1": "TEACHER", "2": "LECTURER", "3": "OFFICER", "4": "STAFF", "5": "OTHER" };
+    if (!roleMap[text]) {
+      reply = "Please reply with 1, 2, 3, 4, or 5 to select your role.";
+    } else {
+      session.verifyRole = roleMap[text];
+      session.step = "VERIFY_DEPT";
+      await setSession(phone, session);
+      reply = "*Step 3 of 5:* Which *department or school* do you work at?\n\nExample: ZP High School Nalgonda, Revenue Department Warangal, District Collectorate Khammam\n\nType your answer below.";
+    }
+
+  } else if (session.step === "VERIFY_DEPT") {
+    if (text.length < 3) {
+      reply = "Please enter your department or school name to continue.";
+    } else {
+      session.verifyDept = text;
+      session.step = "VERIFY_ID_TYPE";
+      await setSession(phone, session);
+      reply = "*Step 4 of 5:* What type of government ID do you have?\n\n1. Aadhaar Card\n2. Service Book\n3. Employee ID Card\n4. Other\n\nReply with the number.";
+    }
+
+  } else if (session.step === "VERIFY_ID_TYPE") {
+    const idTypeMap = { "1": "AADHAAR", "2": "SERVICE_BOOK", "3": "EMPLOYEE_ID", "4": "OTHER" };
+    if (!idTypeMap[text]) {
+      reply = "Please reply with 1, 2, 3, or 4 to select your ID type.";
+    } else {
+      session.verifyIdType = idTypeMap[text];
+      session.step = "VERIFY_ID_NUMBER";
+      await setSession(phone, session);
+      reply = "*Step 5 of 5:* Please share your *ID number*.\n\n🔒 This is kept confidential and used only for verification.";
+    }
+
+  } else if (session.step === "VERIFY_ID_NUMBER") {
+    if (text.length < 3) {
+      reply = "Please enter your ID number to complete verification.";
+    } else {
+      await clearSession(phone);
+      await prisma.user.upsert({
+        where:  { phone },
+        update: {
+          name:               session.verifyName,
+          govtRole:           session.verifyRole,
+          govtDepartment:     session.verifyDept,
+          govtIdType:         session.verifyIdType,
+          govtIdNumber:       text,
+          verificationStatus: "PENDING",
+        },
+        create: {
+          phone,
+          name:               session.verifyName,
+          govtRole:           session.verifyRole,
+          govtDepartment:     session.verifyDept,
+          govtIdType:         session.verifyIdType,
+          govtIdNumber:       text,
+          verificationStatus: "PENDING",
+        },
+      });
+      reply = "✅ Verification submitted! Your details have been sent to the TOVA team.\n\nWe'll review and notify you within 24–48 hours.\n\nType *hi* to browse available rides in the meantime.";
+    }
+
   // ── Cancel ───────────────────────────────────────────────────────────────
 
   } else if (lower === "cancel") {
@@ -227,7 +323,7 @@ router.post("/incoming", async (req, res) => {
   // ── Help ─────────────────────────────────────────────────────────────────
 
   } else if (lower === "help" || lower === "commands" || lower === "?") {
-    reply = `👋 *TOVA Commands*\n\n*hi* — Book a new ride\n*status* — Check your current booking\n*cancel* — Cancel and request a refund\n*help* — Show this list\n\nFor support: https://wa.me/919390537737`;
+    reply = `👋 *TOVA Commands*\n\n*hi* — Book a new ride\n*verify* — Submit your govt ID for verification\n*status* — Check your current booking\n*cancel* — Cancel and request a refund\n*help* — Show this list\n\nFor support: https://wa.me/919390537737`;
 
   // ── Fallback ─────────────────────────────────────────────────────────────
 

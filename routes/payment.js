@@ -45,6 +45,16 @@ router.post("/create", async (req, res) => {
     return res.status(409).json({ error: "You already have an active booking for this trip." });
   }
 
+  // Verification gate
+  const user = await prisma.user.findUnique({ where: { phone }, select: { verificationStatus: true } });
+  if (user?.verificationStatus === "SUSPENDED") {
+    return res.status(403).json({ error: "Your account has been suspended. Contact support on WhatsApp." });
+  }
+  const manualVerifFlag = await prisma.featureFlag.findUnique({ where: { key: "manual_verification" } }).catch(() => null);
+  if (manualVerifFlag?.enabled && user?.verificationStatus !== "APPROVED") {
+    return res.status(403).json({ error: "Your account is pending verification. You will be notified once approved." });
+  }
+
   const amountPaise = trip.priceInr * 100;
 
   try {
