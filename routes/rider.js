@@ -80,6 +80,7 @@ router.get("/bookings", async (req, res) => {
   const result = bookings.map((b) => ({
     id:          b.id,
     orderId:     b.orderId,
+    tripId:      b.tripId,
     status:      b.status,
     amountInr:   Math.round(b.amount / 100),
     createdAt:   b.createdAt,
@@ -96,6 +97,59 @@ router.get("/bookings", async (req, res) => {
   }));
 
   res.json(result);
+});
+
+// ── POST /rider/rebook ───────────────────────────────────────────────────────
+// Given the rider's last confirmed booking's tripId, finds the next available
+// trip on the same route with the same departure time.
+// Returns trip details so the frontend can redirect directly to /checkout.
+
+router.post("/rebook", async (req, res) => {
+  const phone  = (req.body.phone  || "").replace(/^\+/, "");
+  const tripId = (req.body.tripId || "").trim();
+  if (!phone || !tripId) return res.status(400).json({ error: "phone and tripId required" });
+
+  // Verify the booking belongs to this rider
+  const booking = await prisma.booking.findFirst({
+    where:   { phone, tripId, status: { in: ["CONFIRMED", "COMPLETED"] } },
+    include: { trip: { include: { route: true } } },
+  });
+  if (!booking?.trip) {
+    return res.status(404).json({ error: "No matching confirmed booking found." });
+  }
+
+  const { routeId, departureTime } = booking.trip;
+
+  // Find the next available trip: same route, same departure time, future date, open seats
+  const next = await prisma.trip.findFirst({
+    where: {
+      routeId,
+      departureTime,
+      status:    "OPEN",
+      seatsLeft: { gt: 0 },
+      tripDate:  { gt: new Date() },
+    },
+    orderBy: { tripDate: "asc" },
+    include: { route: true },
+  });
+
+  if (!next) {
+    return res.status(404).json({ error: "No upcoming trips on this route right now." });
+  }
+
+  console.log(`[rider] rebook: ${phone} → trip ${next.id} (${next.route.fromName} → ${next.route.toName})`);
+
+  res.json({
+    tripId:        next.id,
+    departureTime: next.departureTime,
+    tripDate:      next.tripDate,
+    priceInr:      next.priceInr,
+    seatsLeft:     next.seatsLeft,
+    route: {
+      fromName: next.route.fromName,
+      toName:   next.route.toName,
+    },
+  });
 });
 
 module.exports = router;
