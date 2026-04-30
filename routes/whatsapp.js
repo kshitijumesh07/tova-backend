@@ -210,10 +210,29 @@ router.post("/incoming", async (req, res) => {
       reply = `✅ Cancellation confirmed!\n\nRefund of ₹${result.amountInr} will reflect in your account within 5–7 business days.\n\nType *hi* to book a new ride.`;
     }
 
+  // ── Status ───────────────────────────────────────────────────────────────
+
+  } else if (lower === "status" || lower === "my booking" || lower === "booking") {
+    const booking = await getLatestConfirmedBooking(phone);
+    if (!booking) {
+      reply = "You don't have any active bookings right now.\n\nType *hi* to book a ride. 🚗";
+    } else {
+      const route = booking.trip?.route;
+      const line  = route
+        ? `${route.fromName} → ${route.toName} at ${booking.trip.departureTime}`
+        : `Order ${booking.orderId}`;
+      reply = `📋 *Your latest booking*\n\n🚗 ${line}\nStatus: ✅ Confirmed\nOrder: ${booking.orderId}\n\nType *cancel* to cancel and request a refund, or *hi* to book another ride.`;
+    }
+
+  // ── Help ─────────────────────────────────────────────────────────────────
+
+  } else if (lower === "help" || lower === "commands" || lower === "?") {
+    reply = `👋 *TOVA Commands*\n\n*hi* — Book a new ride\n*status* — Check your current booking\n*cancel* — Cancel and request a refund\n*help* — Show this list\n\nFor support: https://wa.me/919390537737`;
+
   // ── Fallback ─────────────────────────────────────────────────────────────
 
   } else {
-    reply = "Hi there! 👋 Type *hi* to start booking your TOVA ride.";
+    reply = "Hi there! 👋 Type *hi* to book a ride, *status* to check your booking, or *help* to see all commands.";
   }
 
   if (reply) notifyUser(phone, reply);
