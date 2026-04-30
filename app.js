@@ -22,6 +22,7 @@ app.use("/host",    require("./routes/host"));
 app.use("/rider",   require("./routes/rider"));
 app.use("/ride",    require("./routes/ride"));
 app.use("/debug",   require("./routes/debug"));
+app.use("/admin",   require("./routes/admin"));
 app.use("/api",     require("./routes/api"));
 
 app.get("/", (req, res) => res.send("OK"));

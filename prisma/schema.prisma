@@ -46,12 +46,55 @@ model Trip {
 }
 
 model User {
-  id        String    @id @default(uuid())
-  phone     String    @unique
-  name      String?
-  gender    String?   // "MALE" | "FEMALE" | "OTHER"
-  createdAt DateTime  @default(now())
-  bookings  Booking[]
+  id                 String    @id @default(uuid())
+  phone              String    @unique
+  name               String?
+  gender             String?
+  govtIdType         String?
+  govtIdNumber       String?
+  govtDepartment     String?
+  govtRole           String?   // TEACHER | LECTURER | OFFICER | STAFF | OTHER
+  verificationStatus String    @default("UNVERIFIED") // UNVERIFIED | PENDING | APPROVED | SUSPENDED
+  verificationNotes  String?
+  tags               String[]  @default([])
+  createdAt          DateTime  @default(now())
+  bookings           Booking[]
+}
+
+model Zone {
+  id         String   @id @default(cuid())
+  name       String
+  district   String
+  state      String   @default("Telangana")
+  isActive   Boolean  @default(false)
+  maxDensity Int      @default(0)
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  enabled     Boolean  @default(false)
+  label       String
+  description String?
+  category    String   @default("general")
+  updatedAt   DateTime @updatedAt
+}
+
+model FuturePossibility {
+  id           String   @id @default(cuid())
+  phase        Int      @default(1)
+  title        String
+  description  String?
+  status       String   @default("PLANNED") // PLANNED | IN_PROGRESS | DONE | DISABLED
+  enabled      Boolean  @default(false)
+  notes        String?
+  checklist    String   @default("[]")
+  dependencies String   @default("[]")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model Booking {
