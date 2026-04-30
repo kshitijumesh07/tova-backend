@@ -3,9 +3,10 @@
  * All routes require Authorization: Bearer <DEBUG_TOKEN>
  */
 
-const express = require("express");
-const prisma  = require("../services/db");
-const router  = express.Router();
+const express      = require("express");
+const prisma       = require("../services/db");
+const { notifyUser } = require("../services/notify");
+const router       = express.Router();
 
 // ── Auth (reuse same DEBUG_TOKEN) ─────────────────────────────────────────────
 
@@ -53,6 +54,16 @@ router.patch("/users/:id/verify", async (req, res) => {
       where: { id: req.params.id },
       data: { verificationStatus: status, ...(notes !== undefined ? { verificationNotes: notes } : {}) },
     });
+
+    const messages = {
+      APPROVED:  `✅ *You're verified on TOVA!*\n\nWelcome, ${user.name || "there"}. Your government employee status has been confirmed.\n\nType *hi* to book your first ride. 🚗`,
+      SUSPENDED: `🚫 Your TOVA account has been suspended. If you think this is a mistake, contact us: https://wa.me/919390537737`,
+      PENDING:   `⏳ Your TOVA verification is back under review. We'll notify you once a decision is made.`,
+    };
+    if (messages[status]) {
+      notifyUser(user.phone, messages[status]).catch(() => {});
+    }
+
     res.json(user);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

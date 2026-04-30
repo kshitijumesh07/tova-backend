@@ -276,6 +276,13 @@ router.post("/incoming", async (req, res) => {
           verificationStatus: "PENDING",
         },
       });
+
+      const adminPhone = process.env.ADMIN_PHONE || "919390537737";
+      notifyUser(
+        adminPhone,
+        `🆕 *New verification request*\n\nName: ${session.verifyName}\nRole: ${session.verifyRole}\nDept: ${session.verifyDept}\nID: ${session.verifyIdType} — ${text}\nPhone: +${phone}\n\nOpen admin panel to approve or reject.`,
+      ).catch(() => {});
+
       reply = "✅ Verification submitted! Your details have been sent to the TOVA team.\n\nWe'll review and notify you within 24–48 hours.\n\nType *hi* to browse available rides in the meantime.";
     }
 
