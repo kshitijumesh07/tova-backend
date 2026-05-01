@@ -58,6 +58,19 @@ router.post("/verify-otp", async (req, res) => {
   res.json({ phone: user.phone, name: user.name || "" });
 });
 
+// ── GET /rider/profile?phone= ─────────────────────────────────────────────────
+
+router.get("/profile", async (req, res) => {
+  const phone = (req.query.phone || "").replace(/^\+/, "");
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  const user = await prisma.user.findUnique({
+    where:  { phone },
+    select: { phone: true, name: true, gender: true, verificationStatus: true, govtRole: true, govtDepartment: true, tags: true, createdAt: true },
+  });
+  if (!user) return res.status(404).json({ error: "User not found." });
+  res.json(user);
+});
+
 // ── GET /rider/bookings?phone= ────────────────────────────────────────────────
 
 router.get("/bookings", async (req, res) => {

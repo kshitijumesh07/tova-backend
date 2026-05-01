@@ -70,14 +70,14 @@ init();
 const OTP_PREFIX = "tova:otp:";
 const OTP_TTL    = 300; // 5 minutes
 
-async function setOtp(phone, otp) {
+async function setOtp(phone, otp, ttl = OTP_TTL) {
   const key = OTP_PREFIX + phone;
   if (redis) {
-    try { await redis.setex(key, OTP_TTL, otp); return; }
+    try { await redis.setex(key, ttl, otp); return; }
     catch (err) { console.error("[session] setOtp failed:", err.message); }
   }
   fallback[key] = otp;
-  setTimeout(() => delete fallback[key], OTP_TTL * 1000);
+  setTimeout(() => delete fallback[key], ttl * 1000);
 }
 
 async function getOtp(phone) {
