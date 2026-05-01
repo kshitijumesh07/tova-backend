@@ -27,15 +27,25 @@ router.post("/generate", async (req, res) => {
   if (!trip)                       return res.status(404).json({ error: "Trip not found." });
   if (trip.status === "CANCELLED") return res.status(409).json({ error: "Trip is cancelled." });
 
-  const otp = String(Math.floor(100000 + Math.random() * 900000));
-  const state = { otp, riderPhone: phone, hostPhone: trip.host.phone, riderConfirmed: false, hostConfirmed: false };
-  await setOtp(KEY(tripId), JSON.stringify(state));
+  // Reuse existing OTP if already generated for this trip — don't regenerate
+  const existing = await getOtp(KEY(tripId));
+  let state;
+  if (existing) {
+    try { state = JSON.parse(existing); } catch { state = null; }
+  }
+  if (!state) {
+    const otp = String(Math.floor(1000 + Math.random() * 9000)); // 4-digit
+    state = { otp, riderPhone: phone, hostPhone: trip.host.phone, riderConfirmed: false, hostConfirmed: false };
+    await setOtp(KEY(tripId), JSON.stringify(state));
+    console.log("[otp] generated for trip:", tripId);
+  } else {
+    console.log("[otp] resent for trip:", tripId);
+  }
 
   const routeLabel = trip.route ? `${trip.route.fromName} → ${trip.route.toName}` : trip.departureTime;
-  await notifyUser(phone,           `🔢 *TOVA Ride OTP: ${otp}*\n\nShare with your host to start the ride.\n${routeLabel} at ${trip.departureTime}`).catch(() => {});
-  await notifyUser(trip.host.phone, `🔢 *TOVA Ride OTP: ${otp}*\n\nConfirm this code with your rider before departure.\n${routeLabel} at ${trip.departureTime}`).catch(() => {});
+  await notifyUser(phone,           `🔢 *TOVA Ride OTP: ${state.otp}*\n\nShare with your host to start the ride.\n${routeLabel} at ${trip.departureTime}`).catch(() => {});
+  await notifyUser(trip.host.phone, `🔢 *TOVA Ride OTP: ${state.otp}*\n\nConfirm this code with your rider before departure.\n${routeLabel} at ${trip.departureTime}`).catch(() => {});
 
-  console.log("[otp] generated for trip:", tripId);
   res.json({ sent: true });
 });
 
