@@ -85,6 +85,122 @@ router.patch("/users/:id/profile", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+router.get("/users/:id/bookings", async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { phone: true } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const bookings = await prisma.booking.findMany({
+      where: { phone: user.phone },
+      include: { trip: { include: { route: { select: { fromName: true, toName: true } } } }, payment: { select: { status: true, amount: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(bookings);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch("/users/:id/flag", async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { tags: true } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const flagged = user.tags.includes("FLAGGED");
+    const updated = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { tags: flagged ? user.tags.filter(t => t !== "FLAGGED") : [...user.tags, "FLAGGED"] },
+    });
+    res.json(updated);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Trips (ride control) ──────────────────────────────────────────────────────
+
+router.get("/trips", async (req, res) => {
+  try {
+    const trips = await prisma.trip.findMany({
+      include: {
+        route: { select: { fromName: true, toName: true } },
+        host:  { select: { name: true, phone: true } },
+        _count: { select: { bookings: { where: { status: "CONFIRMED" } } } },
+      },
+      orderBy: [{ tripDate: "desc" }, { departureTime: "asc" }],
+      take: 200,
+    });
+    res.json(trips.map(t => ({
+      id: t.id, from: t.route.fromName, to: t.route.toName,
+      hostName: t.host.name, hostPhone: t.host.phone,
+      departureTime: t.departureTime, tripDate: t.tripDate,
+      totalSeats: t.totalSeats, seatsLeft: t.seatsLeft,
+      status: t.status, rideMode: t.rideMode,
+      confirmedRiders: t._count.bookings,
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch("/trips/:id", async (req, res) => {
+  const { status } = req.body;
+  const allowed = ["OPEN", "FULL", "IN_PROGRESS", "COMPLETED", "CANCELLED"];
+  if (!allowed.includes(status)) return res.status(400).json({ error: "Invalid status" });
+  try {
+    const trip = await prisma.trip.update({ where: { id: req.params.id }, data: { status } });
+    res.json(trip);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post("/trips/:id/assign", async (req, res) => {
+  const phone = (req.body.phone || "").replace(/^\+/, "");
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  try {
+    const trip = await prisma.trip.findUnique({ where: { id: req.params.id } });
+    if (!trip) return res.status(404).json({ error: "Trip not found" });
+    await prisma.user.upsert({ where: { phone }, update: {}, create: { phone } });
+    const orderId = `admin_${Date.now()}_${phone.slice(-4)}`;
+    const booking = await prisma.$transaction([
+      prisma.booking.create({
+        data: { orderId, rideId: req.params.id, tripId: req.params.id, phone, status: "CONFIRMED", confirmedAt: new Date(), amount: 0 },
+      }),
+      prisma.trip.update({ where: { id: req.params.id }, data: { seatsLeft: { decrement: 1 } } }),
+    ]);
+    res.json({ ok: true, bookingId: booking[0].id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+
+router.get("/analytics", async (req, res) => {
+  try {
+    const dau = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const start = new Date(d); start.setHours(0, 0, 0, 0);
+      const end   = new Date(d); end.setHours(23, 59, 59, 999);
+      const count = await prisma.booking.count({ where: { createdAt: { gte: start, lte: end } } });
+      dau.push({ date: start.toISOString().slice(0, 10), bookings: count });
+    }
+    const [unverified, pending, approved, suspended] = await Promise.all([
+      prisma.user.count({ where: { verificationStatus: "UNVERIFIED" } }),
+      prisma.user.count({ where: { verificationStatus: "PENDING" } }),
+      prisma.user.count({ where: { verificationStatus: "APPROVED" } }),
+      prisma.user.count({ where: { verificationStatus: "SUSPENDED" } }),
+    ]);
+    const repeatRiders = await prisma.user.count({
+      where: { bookings: { some: { status: "CONFIRMED" } } },
+    });
+    const flaggedUsers = await prisma.user.count({
+      where: { tags: { has: "FLAGGED" } },
+    });
+    const topRoutes = await prisma.booking.groupBy({
+      by: ["rideId"], where: { status: "CONFIRMED", tripId: { not: null } },
+      _count: { id: true }, orderBy: { _count: { id: "desc" } }, take: 8,
+    });
+    res.json({
+      dau,
+      verificationFunnel: { unverified, pending, approved, suspended },
+      repeatRiders,
+      flaggedUsers,
+      topRoutes: topRoutes.map(r => ({ tripId: r.rideId, bookings: r._count.id })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Zones ─────────────────────────────────────────────────────────────────────
 
 router.get("/zones", async (req, res) => {

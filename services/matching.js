@@ -43,8 +43,13 @@ async function getDestinationsFor(fromName, date = new Date()) {
   return routes.map((r) => r.toName);
 }
 
-// Returns all open trips for a specific route today, sorted by departure time
-async function findTripsForRoute(fromName, toName, date = new Date()) {
+// Returns all open trips for a specific route today, sorted by departure time.
+// options: Date (legacy) | { date?, phone? }
+async function findTripsForRoute(fromName, toName, options = {}) {
+  const isDate = options instanceof Date;
+  const date   = isDate ? options : (options.date || new Date());
+  const phone  = isDate ? null    : (options.phone || null);
+
   const { start, end } = dayBounds(date);
   const trips = await prisma.trip.findMany({
     where: {
@@ -63,6 +68,21 @@ async function findTripsForRoute(fromName, toName, date = new Date()) {
     },
     orderBy: { departureTime: "asc" },
   });
+
+  // Repeat pairing bias: preferred hosts (previously ridden together) sorted first
+  if (phone) {
+    const biasFlag = await prisma.featureFlag.findUnique({ where: { key: "repeat_pairing_bias" } }).catch(() => null);
+    if (biasFlag?.enabled) {
+      const prev = await prisma.booking.findMany({
+        where: { phone, status: "CONFIRMED", tripId: { not: null } },
+        include: { trip: { select: { hostId: true } } },
+      });
+      const trusted = new Set(prev.map(b => b.trip?.hostId).filter(Boolean));
+      if (trusted.size > 0) {
+        trips.sort((a, b) => (trusted.has(a.hostId) ? 0 : 1) - (trusted.has(b.hostId) ? 0 : 1));
+      }
+    }
+  }
 
   return trips.map((t) => ({
     id:       t.id,

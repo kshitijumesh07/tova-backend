@@ -160,7 +160,7 @@ router.post("/incoming", async (req, res) => {
       session.destination = dests[idx];
 
       const gender   = session.gender || (await getUserGender(phone));
-      const allRides = await findTripsForRoute(session.pickupZone, session.destination);
+      const allRides = await findTripsForRoute(session.pickupZone, session.destination, { phone });
 
       // Filter: male users cannot see women-only rides
       const rides = allRides.filter(
@@ -192,6 +192,63 @@ router.post("/incoming", async (req, res) => {
       await clearSession(phone);
       const link = `https://www.gotova.in/checkout?ride=${ride.id}&user=${encodeURIComponent("+" + phone)}`;
       reply = `Almost there! 🎉\n\nYou've selected:\n🕐 ${ride.time} | ₹${ride.price} | ${ride.seats} seat(s)\n\nTap the link below to confirm and pay securely:\n${link}\n\nSee you on the road! 🚗`;
+    }
+
+  // ── Become a host ────────────────────────────────────────────────────────
+
+  } else if (lower === "host" || lower === "become host" || lower === "offer ride") {
+    const hostOpenFlag = await prisma.featureFlag.findUnique({ where: { key: "host_open" } }).catch(() => null);
+    if (!hostOpenFlag?.enabled) {
+      reply = "🚗 Host registration is not open right now.\n\nContact us to express interest: https://wa.me/919390537737";
+    } else {
+      const user = await prisma.user.findUnique({ where: { phone }, select: { verificationStatus: true, name: true } });
+      if (!user || user.verificationStatus !== "APPROVED") {
+        reply = "🪪 You need to be a verified government employee before registering as a host.\n\nType *verify* to submit your details for review.";
+      } else {
+        const existing = await prisma.host.findUnique({ where: { phone } });
+        if (existing) {
+          reply = `✅ You're already a TOVA host, ${existing.name}!\n\nManage your trips at gotova.in/host`;
+        } else {
+          await setSession(phone, { step: "BECOME_HOST_NAME", userName: user.name });
+          const hint = user.name ? ` (or reply *1* to use "${user.name}")` : "";
+          reply = `🚗 *Register as a TOVA Host*\n\nYou're eligible to offer rides!\n\n*Step 1 of 3:* What name should riders see?${hint}`;
+        }
+      }
+    }
+
+  } else if (session.step === "BECOME_HOST_NAME") {
+    const name = (text === "1" && session.userName) ? session.userName : text;
+    if (name.length < 2) {
+      reply = "Please enter a valid name to continue.";
+    } else {
+      session.hostName = name;
+      session.step = "BECOME_HOST_VEHICLE";
+      await setSession(phone, session);
+      reply = "*Step 2 of 3:* What vehicle do you have?\n\nExamples: Maruti Swift, Honda City, Hyundai i20\n\nType your vehicle name.";
+    }
+
+  } else if (session.step === "BECOME_HOST_VEHICLE") {
+    if (text.length < 2) {
+      reply = "Please enter your vehicle name to continue.";
+    } else {
+      session.hostVehicle = text;
+      session.step = "BECOME_HOST_SEATS";
+      await setSession(phone, session);
+      reply = "*Step 3 of 3:* How many passenger seats are available?\n\nReply with a number (e.g., 3).";
+    }
+
+  } else if (session.step === "BECOME_HOST_SEATS") {
+    const seats = parseInt(text, 10);
+    if (isNaN(seats) || seats < 1 || seats > 7) {
+      reply = "Please enter a valid number of passenger seats (1–7).";
+    } else {
+      await clearSession(phone);
+      await prisma.host.create({
+        data: { phone, name: session.hostName, vehicle: `${session.hostVehicle} (${seats} seats)`, active: true },
+      });
+      const adminPhone = process.env.ADMIN_PHONE || "919390537737";
+      notifyUser(adminPhone, `🚗 *New host registered*\n\nName: ${session.hostName}\nVehicle: ${session.hostVehicle} (${seats} seats)\nPhone: +${phone}`).catch(() => {});
+      reply = `✅ *You're a TOVA host!*\n\nWelcome, ${session.hostName}! 🎉\n\nVehicle: ${session.hostVehicle} (${seats} seats)\n\nPost your first ride at gotova.in/host\n\nFor support: https://wa.me/919390537737`;
     }
 
   // ── Verify identity ──────────────────────────────────────────────────────
@@ -330,7 +387,7 @@ router.post("/incoming", async (req, res) => {
   // ── Help ─────────────────────────────────────────────────────────────────
 
   } else if (lower === "help" || lower === "commands" || lower === "?") {
-    reply = `👋 *TOVA Commands*\n\n*hi* — Book a new ride\n*verify* — Submit your govt ID for verification\n*status* — Check your current booking\n*cancel* — Cancel and request a refund\n*help* — Show this list\n\nFor support: https://wa.me/919390537737`;
+    reply = `👋 *TOVA Commands*\n\n*hi* — Book a new ride\n*host* — Register as a ride host\n*verify* — Submit your govt ID for verification\n*status* — Check your current booking\n*cancel* — Cancel and request a refund\n*help* — Show this list\n\nFor support: https://wa.me/919390537737`;
 
   // ── Fallback ─────────────────────────────────────────────────────────────
 
