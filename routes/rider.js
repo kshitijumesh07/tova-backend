@@ -14,26 +14,34 @@ router.post("/request-otp", async (req, res) => {
   const phone = (req.body.phone || "").replace(/^\+/, "");
   if (!phone) return res.status(400).json({ error: "phone required" });
 
-  if (!(await checkOtpRateLimit(phone))) {
-    return res.status(429).json({ error: "Too many OTP requests. Try again in 10 minutes." });
-  }
+  try {
+    if (!(await checkOtpRateLimit(phone))) {
+      return res.status(429).json({ error: "Too many OTP requests. Try again in 10 minutes." });
+    }
 
-  const user = await prisma.user.findUnique({ where: { phone } });
-  if (!user) {
-    return res.status(404).json({
-      error: "No account found for this number. Book a ride on WhatsApp first.",
+    const user = await prisma.user.findUnique({
+      where:  { phone },
+      select: { phone: true, name: true },
     });
+    if (!user) {
+      return res.status(404).json({
+        error: "No account found for this number. Book a ride on WhatsApp first.",
+      });
+    }
+
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    await setOtp(rKey(phone), otp);
+    await notifyUser(
+      phone,
+      `Your TOVA login code: *${otp}*\n\nValid for 5 minutes. Do not share this with anyone.`,
+    );
+
+    console.log("[rider] OTP sent to", phone);
+    res.json({ sent: true });
+  } catch (err) {
+    console.error("[rider] request-otp error:", err.message);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
-
-  const otp = String(Math.floor(100000 + Math.random() * 900000));
-  await setOtp(rKey(phone), otp);
-  await notifyUser(
-    phone,
-    `Your TOVA login code: *${otp}*\n\nValid for 5 minutes. Do not share this with anyone.`,
-  );
-
-  console.log("[rider] OTP sent to", phone);
-  res.json({ sent: true });
 });
 
 // ── POST /rider/verify-otp ────────────────────────────────────────────────────
@@ -44,18 +52,26 @@ router.post("/verify-otp", async (req, res) => {
 
   if (!phone || !otp) return res.status(400).json({ error: "phone and otp required" });
 
-  const stored = await getOtp(rKey(phone));
-  if (!stored || stored !== otp) {
-    return res.status(401).json({ error: "Invalid or expired code. Request a new one." });
+  try {
+    const stored = await getOtp(rKey(phone));
+    if (!stored || stored !== otp) {
+      return res.status(401).json({ error: "Invalid or expired code. Request a new one." });
+    }
+
+    await clearOtp(rKey(phone));
+
+    const user = await prisma.user.findUnique({
+      where:  { phone },
+      select: { phone: true, name: true },
+    });
+    if (!user) return res.status(404).json({ error: "User not found." });
+
+    console.log("[rider] verified:", phone);
+    res.json({ phone: user.phone, name: user.name || "" });
+  } catch (err) {
+    console.error("[rider] verify-otp error:", err.message);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
-
-  await clearOtp(rKey(phone));
-
-  const user = await prisma.user.findUnique({ where: { phone } });
-  if (!user) return res.status(404).json({ error: "User not found." });
-
-  console.log("[rider] verified:", phone);
-  res.json({ phone: user.phone, name: user.name || "" });
 });
 
 // ── GET /rider/profile?phone= ─────────────────────────────────────────────────
@@ -63,12 +79,22 @@ router.post("/verify-otp", async (req, res) => {
 router.get("/profile", async (req, res) => {
   const phone = (req.query.phone || "").replace(/^\+/, "");
   if (!phone) return res.status(400).json({ error: "phone required" });
-  const user = await prisma.user.findUnique({
-    where:  { phone },
-    select: { phone: true, name: true, gender: true, verificationStatus: true, govtRole: true, govtDepartment: true, tags: true, createdAt: true },
-  });
-  if (!user) return res.status(404).json({ error: "User not found." });
-  res.json(user);
+  try {
+    const user = await prisma.user.findUnique({
+      where:  { phone },
+      select: { phone: true, name: true, gender: true, verificationStatus: true, govtRole: true, govtDepartment: true, tags: true, createdAt: true },
+    });
+    if (!user) return res.status(404).json({ error: "User not found." });
+    res.json(user);
+  } catch {
+    // New columns may not exist yet on the DB — fall back to minimal fields
+    const user = await prisma.user.findUnique({
+      where:  { phone },
+      select: { phone: true, name: true, createdAt: true },
+    });
+    if (!user) return res.status(404).json({ error: "User not found." });
+    res.json({ ...user, verificationStatus: "UNVERIFIED", tags: [] });
+  }
 });
 
 // ── GET /rider/bookings?phone= ────────────────────────────────────────────────
