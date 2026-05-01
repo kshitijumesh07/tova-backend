@@ -1,7 +1,18 @@
 const express = require("express");
+const prisma   = require("../services/db");
 const { getPickupZones, getDestinationsFor, findTripsForRoute } = require("../services/matching");
 
 const router = express.Router();
+
+// GET /api/flags — public read so frontends can conditionally show/hide flag-gated UI
+router.get("/flags", async (req, res) => {
+  try {
+    const flags = await prisma.featureFlag.findMany({ select: { key: true, enabled: true } });
+    const result = {};
+    flags.forEach(f => { result[f.key] = f.enabled; });
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // GET /api/routes — public, no auth — returns today's active routes for the landing page
 router.get("/routes", async (req, res) => {

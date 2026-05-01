@@ -102,6 +102,7 @@ router.get("/bookings", async (req, res) => {
       ? {
           tripDate:      b.trip.tripDate,
           departureTime: b.trip.departureTime,
+          tripStatus:    b.trip.status,
           route: b.trip.route
             ? { fromName: b.trip.route.fromName, toName: b.trip.route.toName }
             : null,
