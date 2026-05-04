@@ -362,4 +362,42 @@ router.delete("/future/:id", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Ride Request Demand ───────────────────────────────────────────────────────
+
+router.get("/ride-requests", async (req, res) => {
+  try {
+    const rows = await prisma.rideRequest.findMany({
+      orderBy: [{ tripDate: "asc" }, { createdAt: "asc" }],
+    });
+
+    // Group by route+date
+    const map = {};
+    for (const r of rows) {
+      const key = `${r.fromName}||${r.toName}||${r.tripDate}`;
+      if (!map[key]) map[key] = { fromName: r.fromName, toName: r.toName, tripDate: r.tripDate, count: 0, notified: true, phones: [] };
+      map[key].count++;
+      map[key].phones.push(r.phone);
+      if (!r.notified) map[key].notified = false;
+    }
+
+    // For each route, check if any host has ever run it
+    const groups = await Promise.all(Object.values(map).map(async (g) => {
+      const hostCount = await prisma.trip.count({ where: { route: { fromName: g.fromName, toName: g.toName } } });
+      return { ...g, hasHosts: hostCount > 0 };
+    }));
+
+    groups.sort((a, b) => b.count - a.count);
+    res.json(groups);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete("/ride-requests", async (req, res) => {
+  const { fromName, toName, tripDate } = req.body;
+  if (!fromName || !toName || !tripDate) return res.status(400).json({ error: "fromName, toName, tripDate required" });
+  try {
+    await prisma.rideRequest.deleteMany({ where: { fromName, toName, tripDate } });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
