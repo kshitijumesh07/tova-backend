@@ -12,6 +12,7 @@ const rKey = (phone) => `rider:${phone}`;
 
 router.post("/request-otp", async (req, res) => {
   const phone = (req.body.phone || "").replace(/^\+/, "");
+  const name  = (req.body.name  || "").trim();
   if (!phone) return res.status(400).json({ error: "phone required" });
 
   try {
@@ -23,21 +24,24 @@ router.post("/request-otp", async (req, res) => {
       where:  { phone },
       select: { phone: true, name: true },
     });
-    if (!user) {
+
+    if (!user && !name) {
       return res.status(404).json({
-        error: "No account found for this number. Book a ride on WhatsApp first.",
+        error: "No account found for this number. Enter your name to register, or book on WhatsApp first.",
+        needsName: true,
       });
     }
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
-    await setOtp(rKey(phone), otp);
+    // Store name alongside OTP for new-user registration
+    await setOtp(rKey(phone), JSON.stringify({ otp, name: user ? (user.name || name) : name, isNew: !user }));
     await notifyUser(
       phone,
       `Your TOVA login code: *${otp}*\n\nValid for 5 minutes. Do not share this with anyone.`,
     );
 
-    console.log("[rider] OTP sent to", phone);
-    res.json({ sent: true });
+    console.log("[rider] OTP sent to", phone, user ? "(existing)" : "(new registration)");
+    res.json({ sent: true, isNew: !user });
   } catch (err) {
     console.error("[rider] request-otp error:", err.message);
     res.status(500).json({ error: "Something went wrong. Please try again." });
@@ -53,18 +57,29 @@ router.post("/verify-otp", async (req, res) => {
   if (!phone || !otp) return res.status(400).json({ error: "phone and otp required" });
 
   try {
-    const stored = await getOtp(rKey(phone));
-    if (!stored || stored !== otp) {
+    const raw = await getOtp(rKey(phone));
+    if (!raw) return res.status(401).json({ error: "Invalid or expired code. Request a new one." });
+
+    let session;
+    try { session = JSON.parse(raw); } catch { session = { otp: raw }; }
+
+    if (session.otp !== otp) {
       return res.status(401).json({ error: "Invalid or expired code. Request a new one." });
     }
 
     await clearOtp(rKey(phone));
 
-    const user = await prisma.user.findUnique({
-      where:  { phone },
-      select: { phone: true, name: true },
-    });
-    if (!user) return res.status(404).json({ error: "User not found." });
+    let user = await prisma.user.findUnique({ where: { phone }, select: { phone: true, name: true } });
+
+    if (!user && session.isNew) {
+      user = await prisma.user.create({
+        data:   { phone, name: session.name || "" },
+        select: { phone: true, name: true },
+      });
+      console.log("[rider] registered via PWA:", phone, session.name);
+    } else if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
 
     console.log("[rider] verified:", phone);
     res.json({ phone: user.phone, name: user.name || "" });

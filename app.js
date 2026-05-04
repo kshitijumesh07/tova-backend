@@ -24,6 +24,7 @@ app.use("/ride",    require("./routes/ride"));
 app.use("/debug",   require("./routes/debug"));
 app.use("/admin",   require("./routes/admin"));
 app.use("/otp",     require("./routes/otp"));
+app.use("/auth",    require("./routes/auth"));
 app.use("/api",     require("./routes/api"));
 
 app.get("/", (req, res) => res.send("OK"));
@@ -32,13 +33,14 @@ app.get("/", (req, res) => res.send("OK"));
 async function seedFlags() {
   const prisma = require("./services/db");
   const defaults = [
-    { key: "invite_only",          enabled: false },
-    { key: "manual_verification",  enabled: false },
-    { key: "otp_ride_start",       enabled: true  },
-    { key: "live_tracking",        enabled: false },
-    { key: "emergency_trigger",    enabled: true  },
-    { key: "repeat_pairing_bias",  enabled: true  },
-    { key: "host_open",            enabled: true  },
+    { key: "invite_only",          enabled: false, label: "Invite Only Mode" },
+    { key: "manual_verification",  enabled: false, label: "Manual Verification" },
+    { key: "otp_ride_start",       enabled: true,  label: "OTP Ride Start" },
+    { key: "live_tracking",        enabled: false, label: "Live Tracking" },
+    { key: "emergency_trigger",    enabled: true,  label: "Emergency Trigger" },
+    { key: "repeat_pairing_bias",  enabled: true,  label: "Repeat Pairing Bias" },
+    { key: "host_open",            enabled: true,  label: "Host Registration Open" },
+    { key: "ride_requests",        enabled: true,  label: "Demand Waitlist (Ride Requests)" },
   ];
   try {
     for (const flag of defaults) {

@@ -77,7 +77,7 @@ model FeatureFlag {
   id          String   @id @default(cuid())
   key         String   @unique
   enabled     Boolean  @default(false)
-  label       String
+  label       String   @default("")
   description String?
   category    String   @default("general")
   updatedAt   DateTime @updatedAt
@@ -126,6 +126,16 @@ model Payment {
   createdAt           DateTime  @default(now())
   refundedAt          DateTime?
   booking             Booking   @relation(fields: [bookingId], references: [id])
+}
+
+model RideRequest {
+  id        String   @id @default(cuid())
+  phone     String
+  fromName  String
+  toName    String
+  tripDate  String
+  notified  Boolean  @default(false)
+  createdAt DateTime @default(now())
 }
 
 model WebhookEvent {
