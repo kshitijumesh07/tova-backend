@@ -173,7 +173,7 @@ async function handlePaymentFailed({ orderId, paymentEntity }) {
   console.log(`[webhook] payment failed: ${orderId}`);
 
   if (phone) {
-    await notifyUser(phone, `Payment failed for your TOVA booking. Please try again or contact support: https://wa.me/919390537737`);
+    await notifyUser(phone, `Payment failed for your TOVA booking. Please try again or contact support: https://wa.me/917842957070`);
   }
 }
 
@@ -217,7 +217,7 @@ async function handleRefundFailed({ orderId, refundEntity }) {
   if (booking?.phone) {
     notifyUser(
       booking.phone,
-      `There was an issue processing your TOVA refund. Our team has been notified and will resolve it within 24 hours. Contact support: https://wa.me/919390537737`,
+      `There was an issue processing your TOVA refund. Our team has been notified and will resolve it within 24 hours. Contact support: https://wa.me/917842957070`,
     ).catch(() => {});
   }
 }

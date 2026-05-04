@@ -261,7 +261,7 @@ router.patch("/trip/:tripId/cancel", async (req, res) => {
       b.phone,
       `Your TOVA ride on ${trip.tripDate.toDateString()} has been cancelled by the host. ` +
       `Your payment will be refunded within 48 hours. Sorry for the inconvenience.\n\n` +
-      `Contact support: https://wa.me/919390537737`,
+      `Contact support: https://wa.me/917842957070`,
     ).catch(() => {});
   }
 

@@ -123,7 +123,7 @@ router.post("/ride-request", async (req, res) => {
       });
 
       const routeLabel = `${fromName} → ${toName}`;
-      const adminPhone = process.env.ADMIN_PHONE || "919390537737";
+      const adminPhone = process.env.ADMIN_PHONE || "917842957070";
 
       if (pastHosts.length > 0) {
         for (const t of pastHosts) {

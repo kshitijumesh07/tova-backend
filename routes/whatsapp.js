@@ -75,7 +75,7 @@ router.post("/incoming", async (req, res) => {
     if (inviteFlag?.enabled) {
       const existing = await prisma.user.findUnique({ where: { phone }, select: { id: true } });
       if (!existing) {
-        reply = "👋 TOVA is currently open only to verified government employees in our pilot network.\n\nIf you're a govt employee and would like to join, please reach out:\nhttps://wa.me/919390537737";
+        reply = "👋 TOVA is currently open only to verified government employees in our pilot network.\n\nIf you're a govt employee and would like to join, please reach out:\nhttps://wa.me/917842957070";
         if (reply) notifyUser(phone, reply);
         return;
       }
@@ -199,7 +199,7 @@ router.post("/incoming", async (req, res) => {
   } else if (lower === "host" || lower === "become host" || lower === "offer ride") {
     const hostOpenFlag = await prisma.featureFlag.findUnique({ where: { key: "host_open" } }).catch(() => null);
     if (!hostOpenFlag?.enabled) {
-      reply = "🚗 Host registration is not open right now.\n\nContact us to express interest: https://wa.me/919390537737";
+      reply = "🚗 Host registration is not open right now.\n\nContact us to express interest: https://wa.me/917842957070";
     } else {
       const user = await prisma.user.findUnique({ where: { phone }, select: { verificationStatus: true, name: true } });
       if (!user || user.verificationStatus !== "APPROVED") {
@@ -246,9 +246,9 @@ router.post("/incoming", async (req, res) => {
       await prisma.host.create({
         data: { phone, name: session.hostName, vehicle: `${session.hostVehicle} (${seats} seats)`, active: true },
       });
-      const adminPhone = process.env.ADMIN_PHONE || "919390537737";
+      const adminPhone = process.env.ADMIN_PHONE || "917842957070";
       notifyUser(adminPhone, `🚗 *New host registered*\n\nName: ${session.hostName}\nVehicle: ${session.hostVehicle} (${seats} seats)\nPhone: +${phone}`).catch(() => {});
-      reply = `✅ *You're a TOVA host!*\n\nWelcome, ${session.hostName}! 🎉\n\nVehicle: ${session.hostVehicle} (${seats} seats)\n\nPost your first ride at gotova.in/host\n\nFor support: https://wa.me/919390537737`;
+      reply = `✅ *You're a TOVA host!*\n\nWelcome, ${session.hostName}! 🎉\n\nVehicle: ${session.hostVehicle} (${seats} seats)\n\nPost your first ride at gotova.in/host\n\nFor support: https://wa.me/917842957070`;
     }
 
   // ── Verify identity ──────────────────────────────────────────────────────
@@ -258,9 +258,9 @@ router.post("/incoming", async (req, res) => {
     if (user?.verificationStatus === "APPROVED") {
       reply = "✅ Your account is already verified. You're good to go!\n\nType *hi* to book a ride.";
     } else if (user?.verificationStatus === "PENDING") {
-      reply = "⏳ Your verification is already under review. We'll notify you once it's approved (usually 24–48 hrs).\n\nFor urgent queries: https://wa.me/919390537737";
+      reply = "⏳ Your verification is already under review. We'll notify you once it's approved (usually 24–48 hrs).\n\nFor urgent queries: https://wa.me/917842957070";
     } else if (user?.verificationStatus === "SUSPENDED") {
-      reply = "🚫 Your account has been suspended. Please contact support: https://wa.me/919390537737";
+      reply = "🚫 Your account has been suspended. Please contact support: https://wa.me/917842957070";
     } else {
       await setSession(phone, { step: "VERIFY_NAME" });
       reply = "Let's verify your government employee status. 🪪\n\n*Step 1 of 5:* Please share your *full name* as it appears on your government ID.";
@@ -334,7 +334,7 @@ router.post("/incoming", async (req, res) => {
         },
       });
 
-      const adminPhone = process.env.ADMIN_PHONE || "919390537737";
+      const adminPhone = process.env.ADMIN_PHONE || "917842957070";
       notifyUser(
         adminPhone,
         `🆕 *New verification request*\n\nName: ${session.verifyName}\nRole: ${session.verifyRole}\nDept: ${session.verifyDept}\nID: ${session.verifyIdType} — ${text}\nPhone: +${phone}\n\nOpen admin panel to approve or reject.`,
@@ -363,7 +363,7 @@ router.post("/incoming", async (req, res) => {
     await clearSession(phone);
     const result = await processRefund(orderId);
     if (result.error) {
-      reply = `Sorry, we couldn't process your cancellation: ${result.error}\n\nPlease contact support: https://wa.me/919390537737`;
+      reply = `Sorry, we couldn't process your cancellation: ${result.error}\n\nPlease contact support: https://wa.me/917842957070`;
     } else if (result.skipped) {
       reply = `This booking has already been refunded. Contact support if you haven't received it.`;
     } else {
@@ -387,7 +387,7 @@ router.post("/incoming", async (req, res) => {
   // ── Help ─────────────────────────────────────────────────────────────────
 
   } else if (lower === "help" || lower === "commands" || lower === "?") {
-    reply = `👋 *TOVA Commands*\n\n*hi* — Book a new ride\n*host* — Register as a ride host\n*verify* — Submit your govt ID for verification\n*status* — Check your current booking\n*cancel* — Cancel and request a refund\n*help* — Show this list\n\nFor support: https://wa.me/919390537737`;
+    reply = `👋 *TOVA Commands*\n\n*hi* — Book a new ride\n*host* — Register as a ride host\n*verify* — Submit your govt ID for verification\n*status* — Check your current booking\n*cancel* — Cancel and request a refund\n*help* — Show this list\n\nFor support: https://wa.me/917842957070`;
 
   // ── Fallback ─────────────────────────────────────────────────────────────
 

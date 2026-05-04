@@ -57,7 +57,7 @@ router.patch("/users/:id/verify", async (req, res) => {
 
     const messages = {
       APPROVED:  `✅ *You're verified on TOVA!*\n\nWelcome, ${user.name || "there"}. Your government employee status has been confirmed.\n\nType *hi* to book your first ride. 🚗`,
-      SUSPENDED: `🚫 Your TOVA account has been suspended. If you think this is a mistake, contact us: https://wa.me/919390537737`,
+      SUSPENDED: `🚫 Your TOVA account has been suspended. If you think this is a mistake, contact us: https://wa.me/917842957070`,
       PENDING:   `⏳ Your TOVA verification is back under review. We'll notify you once a decision is made.`,
     };
     if (messages[status]) {

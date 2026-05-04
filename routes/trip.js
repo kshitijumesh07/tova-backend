@@ -47,7 +47,7 @@ router.post("/:id/emergency", async (req, res) => {
   ]);
 
   const routeLabel = trip?.route ? `${trip.route.fromName} → ${trip.route.toName}` : req.params.id;
-  const adminPhone = process.env.ADMIN_PHONE || "919390537737";
+  const adminPhone = process.env.ADMIN_PHONE || "917842957070";
 
   await notifyUser(adminPhone,
     `🆘 *EMERGENCY ALERT*\n\nRider: ${user?.name || "Unknown"} (+${phone})\nTrip: ${routeLabel}\nHost: ${trip?.host?.name || "Unknown"} (+${trip?.host?.phone || "Unknown"})\n\nImmediate attention required.`,
