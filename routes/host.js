@@ -186,18 +186,40 @@ router.get("/trips", async (req, res) => {
 // ── POST /host/trip ───────────────────────────────────────────────────────────
 
 router.post("/trip", async (req, res) => {
-  const { hostPhone, routeId, departureTime, tripDate, totalSeats, totalCostInr, rideMode = "MIXED" } = req.body;
+  const { hostPhone, routeId, fromName, toName, departureTime, tripDate, totalSeats, totalCostInr, rideMode = "MIXED" } = req.body;
   const phone = (hostPhone || "").replace(/^\+/, "");
 
-  if (!phone || !routeId || !departureTime || !tripDate || !totalSeats || !totalCostInr) {
-    return res.status(400).json({ error: "All fields required: hostPhone, routeId, departureTime, tripDate, totalSeats, totalCostInr" });
+  if (!phone || !departureTime || !tripDate || !totalSeats || !totalCostInr) {
+    return res.status(400).json({ error: "hostPhone, departureTime, tripDate, totalSeats, totalCostInr required" });
+  }
+  if (!routeId && (!fromName || !toName)) {
+    return res.status(400).json({ error: "Provide routeId or fromName+toName" });
   }
 
   const host = await prisma.host.findUnique({ where: { phone } });
   if (!host) return res.status(404).json({ error: "Host not found" });
 
-  const route = await prisma.route.findUnique({ where: { id: routeId } });
-  if (!route) return res.status(404).json({ error: "Route not found" });
+  let route;
+  if (routeId) {
+    route = await prisma.route.findUnique({ where: { id: routeId } });
+    if (!route) return res.status(404).json({ error: "Route not found" });
+  } else {
+    // Find existing route by name (case-insensitive) or create a new one
+    const from = fromName.trim();
+    const to   = toName.trim();
+    route = await prisma.route.findFirst({
+      where: {
+        fromName: { equals: from, mode: "insensitive" },
+        toName:   { equals: to,   mode: "insensitive" },
+      },
+    });
+    if (!route) {
+      route = await prisma.route.create({
+        data: { fromName: from, toName: to, active: true },
+      });
+      console.log("[host/trip] created new route:", from, "→", to);
+    }
+  }
 
   const priceInr = Math.ceil(totalCostInr / totalSeats);
 
