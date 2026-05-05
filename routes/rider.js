@@ -124,6 +124,7 @@ router.get("/bookings", async (req, res) => {
       trip: {
         include: {
           route: { select: { fromName: true, toName: true } },
+          host:  { select: { name: true, vehicle: true, phone: true } },
         },
       },
     },
@@ -146,6 +147,9 @@ router.get("/bookings", async (req, res) => {
           tripStatus:    b.trip.status,
           route: b.trip.route
             ? { fromName: b.trip.route.fromName, toName: b.trip.route.toName }
+            : null,
+          host: b.trip.host
+            ? { name: b.trip.host.name, vehicle: b.trip.host.vehicle, phone: b.trip.host.phone }
             : null,
         }
       : null,

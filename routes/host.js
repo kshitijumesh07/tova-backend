@@ -160,7 +160,7 @@ router.get("/trips", async (req, res) => {
       route:    { select: { fromName: true, toName: true } },
       bookings: {
         where:  { status: "CONFIRMED" },
-        select: { id: true, phone: true },
+        select: { id: true, phone: true, user: { select: { name: true } } },
       },
     },
     orderBy: { departureTime: "asc" },
@@ -177,7 +177,7 @@ router.get("/trips", async (req, res) => {
     booked:        t.bookings.length,
     priceInr:      t.priceInr,
     status:        t.status,
-    riders:        t.bookings.map((b) => ({ phone: b.phone })),
+    riders:        t.bookings.map((b) => ({ phone: b.phone, name: b.user?.name || "" })),
   }));
 
   res.json(result);
