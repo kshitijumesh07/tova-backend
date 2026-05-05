@@ -22,7 +22,7 @@ router.post("/request-otp", async (req, res) => {
     await setOtp(KEY(phone), otp);
     await notifyUser(phone, `Your TOVA code: *${otp}*\n\nValid for 5 minutes. Do not share this with anyone.`);
 
-    console.log("[auth] OTP sent to", phone);
+    console.log("[auth] OTP sent to", phone, "| code:", otp);
     res.json({ sent: true });
   } catch (err) {
     console.error("[auth] request-otp:", err.message);
