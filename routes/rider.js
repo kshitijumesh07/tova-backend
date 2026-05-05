@@ -1,5 +1,6 @@
-const express  = require("express");
-const prisma   = require("../services/db");
+const express   = require("express");
+const Razorpay  = require("razorpay");
+const prisma    = require("../services/db");
 const { setOtp, getOtp, clearOtp, checkOtpRateLimit } = require("../services/session");
 const { notifyUser } = require("../services/notify");
 
@@ -211,6 +212,75 @@ router.post("/rebook", async (req, res) => {
       toName:   next.route.toName,
     },
   });
+});
+
+// ── POST /rider/bookings/:bookingId/cancel ────────────────────────────────────
+// Body: { phone }
+// Calculates refund: >12 hrs before trip → 100%, ≤12 hrs → 50%
+// Triggers Razorpay refund and sets booking to REFUND_PENDING.
+
+router.post("/bookings/:bookingId/cancel", async (req, res) => {
+  const phone = (req.body.phone || "").replace(/^\+/, "");
+  if (!phone) return res.status(400).json({ error: "phone required" });
+
+  const booking = await prisma.booking.findUnique({
+    where:   { id: req.params.bookingId },
+    include: {
+      trip:    { include: { route: true, host: true } },
+      payment: true,
+    },
+  });
+
+  if (!booking)                    return res.status(404).json({ error: "Booking not found" });
+  if (booking.phone !== phone)     return res.status(403).json({ error: "Not your booking" });
+  if (booking.status !== "CONFIRMED") return res.status(409).json({ error: "Only confirmed bookings can be cancelled" });
+
+  // Calculate refund % based on time until departure
+  const now = new Date();
+  let hoursUntilTrip = Infinity;
+  if (booking.trip?.tripDate) {
+    const [h = 0, m = 0] = (booking.trip.departureTime || "00:00").split(":").map(Number);
+    const tripDateTime = new Date(booking.trip.tripDate);
+    tripDateTime.setHours(h, m, 0, 0);
+    hoursUntilTrip = (tripDateTime - now) / 36e5;
+  }
+
+  const refundPct    = hoursUntilTrip > 12 ? 100 : 50;
+  const refundPaise  = Math.round(booking.amount * refundPct / 100);
+
+  // Trigger Razorpay refund if payment has been captured
+  if (booking.payment?.razorpayPaymentId) {
+    try {
+      const rz = new Razorpay({ key_id: process.env.RAZORPAY_KEY, key_secret: process.env.RAZORPAY_SECRET });
+      await rz.payments.refund(booking.payment.razorpayPaymentId, {
+        amount: refundPaise,
+        notes:  { reason: "rider_cancelled", bookingId: booking.id },
+      });
+    } catch (err) {
+      console.error("[rider] refund error:", err?.error?.description || err.message);
+      return res.status(502).json({ error: "Could not initiate refund. Contact support on WhatsApp." });
+    }
+  }
+
+  await prisma.$transaction([
+    prisma.booking.update({ where: { id: booking.id }, data: { status: "REFUND_PENDING" } }),
+    prisma.trip.update({ where: { id: booking.tripId }, data: { seatsLeft: { increment: 1 } } }),
+  ]);
+
+  // Notify host
+  const route = booking.trip?.route;
+  const host  = booking.trip?.host;
+  if (host?.phone) {
+    notifyUser(
+      host.phone,
+      `A rider cancelled their booking for your trip:\n` +
+      `${route ? `${route.fromName} → ${route.toName}` : ""} · ${booking.trip.departureTime}\n` +
+      `One seat is now available again.`,
+    ).catch(() => {});
+  }
+
+  console.log(`[rider] booking cancelled: ${booking.id} | refund ${refundPct}% (₹${Math.round(refundPaise / 100)})`);
+  res.json({ ok: true, refundPct, refundAmountInr: Math.round(refundPaise / 100) });
 });
 
 // ── DELETE /rider/account ─────────────────────────────────────────────────────

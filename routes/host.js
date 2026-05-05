@@ -272,28 +272,37 @@ router.patch("/trip/:tripId/cancel", async (req, res) => {
 
   const trip = await prisma.trip.findUnique({
     where:   { id: req.params.tripId },
-    include: { bookings: { where: { status: "CONFIRMED" }, select: { phone: true } } },
+    include: {
+      bookings: {
+        where:   { status: "CONFIRMED" },
+        include: { payment: true },
+      },
+    },
   });
-  if (!trip)              return res.status(404).json({ error: "Trip not found" });
+  if (!trip)               return res.status(404).json({ error: "Trip not found" });
   if (trip.hostId !== host.id) return res.status(403).json({ error: "Not your trip" });
 
   await prisma.$transaction([
-    prisma.trip.update({
-      where: { id: req.params.tripId },
-      data:  { status: "CANCELLED" },
-    }),
-    prisma.booking.updateMany({
-      where: { tripId: req.params.tripId, status: "CONFIRMED" },
-      data:  { status: "REFUND_PENDING" },
-    }),
+    prisma.trip.update({ where: { id: req.params.tripId }, data: { status: "CANCELLED" } }),
+    prisma.booking.updateMany({ where: { tripId: req.params.tripId, status: "CONFIRMED" }, data: { status: "REFUND_PENDING" } }),
   ]);
 
-  // Notify affected riders asynchronously — don't block the response
+  // Trigger Razorpay full refunds for all confirmed bookings
+  const Razorpay = require("razorpay");
+  const rz = new Razorpay({ key_id: process.env.RAZORPAY_KEY, key_secret: process.env.RAZORPAY_SECRET });
+
   for (const b of trip.bookings) {
+    if (b.payment?.razorpayPaymentId) {
+      rz.payments.refund(b.payment.razorpayPaymentId, {
+        amount: b.amount,
+        notes:  { reason: "host_cancelled_trip", tripId: trip.id },
+      }).catch(err => console.error(`[host] refund failed for booking ${b.id}:`, err?.error?.description || err.message));
+    }
+
     notifyUser(
       b.phone,
       `Your TOVA ride on ${trip.tripDate.toDateString()} has been cancelled by the host. ` +
-      `Your payment will be refunded within 48 hours. Sorry for the inconvenience.\n\n` +
+      `A full refund of ₹${Math.round(b.amount / 100)} will be processed within 5–7 business days. Sorry for the inconvenience.\n\n` +
       `Contact support: https://wa.me/917842957070`,
     ).catch(() => {});
   }
