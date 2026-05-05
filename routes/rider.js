@@ -235,18 +235,10 @@ router.post("/bookings/:bookingId/cancel", async (req, res) => {
   if (booking.phone !== phone)     return res.status(403).json({ error: "Not your booking" });
   if (booking.status !== "CONFIRMED") return res.status(409).json({ error: "Only confirmed bookings can be cancelled" });
 
-  // Calculate refund % based on time until departure
-  const now = new Date();
-  let hoursUntilTrip = Infinity;
-  if (booking.trip?.tripDate) {
-    const [h = 0, m = 0] = (booking.trip.departureTime || "00:00").split(":").map(Number);
-    const tripDateTime = new Date(booking.trip.tripDate);
-    tripDateTime.setHours(h, m, 0, 0);
-    hoursUntilTrip = (tripDateTime - now) / 36e5;
-  }
-
-  const refundPct    = hoursUntilTrip > 12 ? 100 : 50;
-  const refundPaise  = Math.round(booking.amount * refundPct / 100);
+  // Flat ₹50 cancellation fee — rider gets amount minus ₹50
+  const CANCEL_FEE_PAISE = 5000;
+  const refundPaise      = Math.max(0, booking.amount - CANCEL_FEE_PAISE);
+  const refundPct        = booking.amount > 0 ? Math.round(refundPaise / booking.amount * 100) : 0;
 
   // Trigger Razorpay refund if payment has been captured
   if (booking.payment?.razorpayPaymentId) {

@@ -350,18 +350,20 @@ router.post("/incoming", async (req, res) => {
     if (!booking) {
       reply = "You don't have any active bookings to cancel. Type *hi* to book a ride.";
     } else {
-      const route = booking.trip?.route;
-      const line  = route
+      const route      = booking.trip?.route;
+      const line       = route
         ? `${route.fromName} → ${route.toName} at ${booking.trip.departureTime}`
         : `Order ${booking.orderId}`;
+      const amountInr  = Math.round((booking.payment?.amount || 0) / 100);
+      const refundInr  = Math.max(0, amountInr - 50);
       await setSession(phone, { step: "CANCEL_CONFIRM", orderId: booking.orderId });
-      reply = `You have an upcoming booking:\n\n🚗 ${line}\n\nAre you sure you want to cancel and request a refund?\n\nType *confirm cancel* to proceed, or *hi* to go back.`;
+      reply = `You have an upcoming booking:\n\n🚗 ${line}\n\n⚠️ A ₹50 cancellation fee applies.\nYou paid ₹${amountInr} — refund will be ₹${refundInr}.\n\nType *confirm cancel* to proceed, or *hi* to go back.`;
     }
 
   } else if (session.step === "CANCEL_CONFIRM" && lower === "confirm cancel") {
     const orderId = session.orderId;
     await clearSession(phone);
-    const result = await processRefund(orderId);
+    const result = await processRefund(orderId, 50);
     if (result.error) {
       reply = `Sorry, we couldn't process your cancellation: ${result.error}\n\nPlease contact support: https://wa.me/917842957070`;
     } else if (result.skipped) {

@@ -15,8 +15,9 @@ function mode() {
 }
 
 // Process a single refund by Razorpay order ID.
+// cancelFeeInr: optional flat fee to deduct before refunding (e.g. 50 for ₹50).
 // Returns { success, refundId, amountInr } or { error } or { skipped, reason }.
-async function processRefund(orderId) {
+async function processRefund(orderId, cancelFeeInr = 0) {
   const payment = await prisma.payment.findUnique({
     where:   { razorpayOrderId: orderId },
     include: { booking: true },
@@ -34,9 +35,11 @@ async function processRefund(orderId) {
   }
 
   try {
-    const rp     = razorpay();
+    const rp          = razorpay();
+    const feePaise    = cancelFeeInr * 100;
+    const refundPaise = Math.max(0, payment.amount - feePaise);
     const refund = await rp.payments.refund(payment.razorpayPaymentId, {
-      amount: payment.amount,
+      amount: refundPaise,
       speed:  "normal",
       notes:  { reason: "cancellation", order_id: orderId },
     });
@@ -62,8 +65,8 @@ async function processRefund(orderId) {
       `Your TOVA refund of ₹${Math.round(payment.amount / 100)} has been processed and will reflect in your account within 5–7 business days.`,
     ).catch(() => {});
 
-    console.log(`[refund] ${mode()} ok:`, orderId, "→", refund.id, `₹${Math.round(payment.amount / 100)}`);
-    return { success: true, refundId: refund.id, amountInr: Math.round(payment.amount / 100) };
+    console.log(`[refund] ${mode()} ok:`, orderId, "→", refund.id, `₹${Math.round(refundPaise / 100)}`);
+    return { success: true, refundId: refund.id, amountInr: Math.round(refundPaise / 100) };
 
   } catch (err) {
     const msg = err?.error?.description || err?.message || "Refund API call failed";
