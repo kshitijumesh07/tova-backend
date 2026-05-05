@@ -23,7 +23,10 @@ router.post("/request-otp", async (req, res) => {
     await notifyUser(phone, `Your TOVA code: *${otp}*\n\nValid for 5 minutes. Do not share this with anyone.`);
 
     console.log("[auth] OTP sent to", phone, "| code:", otp);
-    res.json({ sent: true });
+
+    // In test mode, return OTP in response so login works without WhatsApp
+    const testMode = process.env.OTP_TEST_MODE === "true";
+    res.json({ sent: true, ...(testMode ? { otp } : {}) });
   } catch (err) {
     console.error("[auth] request-otp:", err.message);
     res.status(500).json({ error: "Something went wrong. Please try again." });
