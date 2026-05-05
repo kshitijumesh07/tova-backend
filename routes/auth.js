@@ -1,7 +1,7 @@
 const express    = require("express");
 const prisma     = require("../services/db");
 const { setOtp, getOtp, clearOtp, checkOtpRateLimit } = require("../services/session");
-const { notifyUser } = require("../services/notify");
+const { sendOtp } = require("../services/notify");
 
 const router = express.Router();
 const KEY    = (phone) => `auth:${phone}`;
@@ -22,7 +22,7 @@ router.post("/request-otp", async (req, res) => {
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     await setOtp(KEY(phone), otp);
-    await notifyUser(phone, `Your TOVA code: *${otp}*\n\nValid for 5 minutes. Do not share this with anyone.`);
+    await sendOtp(phone, otp);
 
     console.log("[auth] OTP sent to", phone, "| code:", otp);
 
