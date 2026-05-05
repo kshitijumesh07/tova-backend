@@ -60,6 +60,41 @@ router.post("/:id/emergency", async (req, res) => {
   res.json({ sent: true });
 });
 
+// ── POST /trip/:id/notify — host sends status update to all riders ────────────
+// Body: { phone, type: "on_way" | "arrived" | "late", lateMinutes? }
+router.post("/:id/notify", async (req, res) => {
+  const phone = (req.body.phone || "").replace(/^\+/, "");
+  const { type, lateMinutes } = req.body;
+  if (!phone || !type) return res.status(400).json({ error: "phone and type required" });
+
+  const trip = await prisma.trip.findUnique({
+    where:   { id: req.params.id },
+    include: {
+      host:     { select: { phone: true, name: true } },
+      route:    { select: { fromName: true, toName: true } },
+      bookings: { where: { status: "CONFIRMED" }, select: { phone: true } },
+    },
+  });
+  if (!trip)                    return res.status(404).json({ error: "Trip not found" });
+  if (trip.host.phone !== phone) return res.status(403).json({ error: "Only the host can send updates" });
+
+  const route = `${trip.route.fromName} → ${trip.route.toName}`;
+  const messages = {
+    on_way:  `🚗 Your TOVA host *${trip.host.name}* is on the way!\n\nTrip: ${route} · ${trip.departureTime}\n\nPlease be at your pickup point on time.`,
+    arrived: `📍 Your TOVA host *${trip.host.name}* has arrived at the pickup point.\n\nTrip: ${route} · ${trip.departureTime}`,
+    late:    `⏱ Your TOVA host *${trip.host.name}* is running about *${lateMinutes || 5} minutes late*.\n\nTrip: ${route} · ${trip.departureTime}\n\nHang tight — they're on the way!`,
+  };
+
+  const msg = messages[type];
+  if (!msg) return res.status(400).json({ error: "type must be on_way, arrived, or late" });
+
+  const riders = trip.bookings.map(b => b.phone);
+  await Promise.all(riders.map(r => notifyUser(r, msg).catch(() => {})));
+
+  console.log(`[trip/notify] host ${phone} sent '${type}' to ${riders.length} riders on trip ${req.params.id}`);
+  res.json({ ok: true, notified: riders.length });
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const trip = await prisma.trip.findUnique({
@@ -67,23 +102,25 @@ router.get("/:id", async (req, res) => {
       include: {
         route: true,
         host:  { select: { name: true, vehicle: true } },
+        stops: { orderBy: { order: "asc" } },
       },
     });
 
     if (!trip) return res.status(404).json({ error: "Trip not found" });
 
     res.json({
-      id:           trip.id,
-      from:         trip.route.fromName,
-      to:           trip.route.toName,
+      id:            trip.id,
+      from:          trip.route.fromName,
+      to:            trip.route.toName,
       departureTime: trip.departureTime,
-      tripDate:     trip.tripDate,
-      price:        trip.priceInr,
-      seatsLeft:    trip.seatsLeft,
-      totalSeats:   trip.totalSeats,
-      status:       trip.status,
-      hostName:     trip.host.name,
-      hostVehicle:  trip.host.vehicle,
+      tripDate:      trip.tripDate,
+      price:         trip.priceInr,
+      seatsLeft:     trip.seatsLeft,
+      totalSeats:    trip.totalSeats,
+      status:        trip.status,
+      hostName:      trip.host.name,
+      hostVehicle:   trip.host.vehicle,
+      stops:         trip.stops.map(s => ({ name: s.name, estimatedTime: s.estimatedTime, order: s.order })),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

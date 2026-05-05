@@ -57,37 +57,55 @@ router.get("/trips", async (req, res) => {
     const start = new Date(base); start.setUTCHours(0, 0, 0, 0);
     const end   = new Date(base); end.setUTCHours(23, 59, 59, 999);
 
-    const routeWhere = {};
-    if (fromName) routeWhere.fromName = { contains: fromName, mode: "insensitive" };
-    if (toName)   routeWhere.toName   = { contains: toName,   mode: "insensitive" };
+    // from can match route origin OR any intermediate stop
+    const baseWhere = {
+      status:    "OPEN",
+      seatsLeft: { gt: 0 },
+      tripDate:  { gte: start, lte: end },
+    };
+    if (fromName && toName) {
+      baseWhere.OR = [
+        { route: { fromName: { contains: fromName, mode: "insensitive" }, toName: { contains: toName, mode: "insensitive" } } },
+        { stops: { some: { name: { contains: fromName, mode: "insensitive" } } }, route: { toName: { contains: toName, mode: "insensitive" } } },
+      ];
+    } else if (fromName) {
+      baseWhere.OR = [
+        { route: { fromName: { contains: fromName, mode: "insensitive" } } },
+        { stops: { some: { name: { contains: fromName, mode: "insensitive" } } } },
+      ];
+    } else if (toName) {
+      baseWhere.route = { toName: { contains: toName, mode: "insensitive" } };
+    }
 
     const trips = await prisma.trip.findMany({
-      where: {
-        status:    "OPEN",
-        seatsLeft: { gt: 0 },
-        tripDate:  { gte: start, lte: end },
-        ...(Object.keys(routeWhere).length ? { route: routeWhere } : {}),
-      },
+      where:   baseWhere,
       include: {
         route: { select: { fromName: true, toName: true } },
         host:  { select: { name: true, vehicle: true } },
+        stops: { orderBy: { order: "asc" } },
       },
       orderBy: { departureTime: "asc" },
     });
 
-    res.json(trips.map((t) => ({
-      id:            t.id,
-      from:          t.route.fromName,
-      to:            t.route.toName,
-      departureTime: t.departureTime,
-      tripDate:      t.tripDate,
-      priceInr:      t.priceInr,
-      seatsLeft:     t.seatsLeft,
-      totalSeats:    t.totalSeats,
-      hostName:      t.host.name,
-      hostVehicle:   t.host.vehicle,
-      rideMode:      t.rideMode,
-    })));
+    res.json(trips.map((t) => {
+      const matchedStop = fromName
+        ? t.stops.find(s => s.name.toLowerCase().includes(fromName.toLowerCase()) || fromName.toLowerCase().includes(s.name.toLowerCase()))
+        : null;
+      return {
+        id:            t.id,
+        from:          t.route.fromName,
+        to:            t.route.toName,
+        departureTime: t.departureTime,
+        tripDate:      t.tripDate,
+        priceInr:      t.priceInr,
+        seatsLeft:     t.seatsLeft,
+        totalSeats:    t.totalSeats,
+        hostName:      t.host.name,
+        hostVehicle:   t.host.vehicle,
+        stops:         t.stops.map(s => ({ name: s.name, estimatedTime: s.estimatedTime, order: s.order })),
+        pickupStop:    matchedStop ? { name: matchedStop.name, estimatedTime: matchedStop.estimatedTime } : null,
+      };
+    }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

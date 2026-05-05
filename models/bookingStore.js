@@ -1,6 +1,6 @@
 const prisma = require("../services/db");
 
-async function createBooking(orderId, rideId, phone, capacity, tripId = null) {
+async function createBooking(orderId, rideId, phone, capacity, tripId = null, pickupStop = null, pickupTime = null) {
   await prisma.user.upsert({
     where:  { phone },
     update: {},
@@ -14,7 +14,9 @@ async function createBooking(orderId, rideId, phone, capacity, tripId = null) {
       phone,
       capacity: capacity || 10,
       status:   "CREATED",
-      ...(tripId ? { tripId } : {}),
+      ...(tripId     ? { tripId }               : {}),
+      ...(pickupStop ? { pickup: pickupStop }    : {}),
+      ...(pickupTime ? { pickupTime }            : {}),
     },
   });
 

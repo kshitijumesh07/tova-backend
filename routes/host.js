@@ -158,9 +158,10 @@ router.get("/trips", async (req, res) => {
     where:   { hostId: host.id, tripDate: { gte: start, lte: end } },
     include: {
       route:    { select: { fromName: true, toName: true } },
+      stops:    { orderBy: { order: "asc" } },
       bookings: {
         where:  { status: "CONFIRMED" },
-        select: { id: true, phone: true, user: { select: { name: true } } },
+        select: { id: true, phone: true, pickup: true, pickupTime: true, user: { select: { name: true } } },
       },
     },
     orderBy: { departureTime: "asc" },
@@ -177,7 +178,8 @@ router.get("/trips", async (req, res) => {
     booked:        t.bookings.length,
     priceInr:      t.priceInr,
     status:        t.status,
-    riders:        t.bookings.map((b) => ({ phone: b.phone, name: b.user?.name || "" })),
+    stops:         t.stops.map(s => ({ name: s.name, estimatedTime: s.estimatedTime, order: s.order })),
+    riders:        t.bookings.map((b) => ({ phone: b.phone, name: b.user?.name || "", pickupStop: b.pickup || null, pickupTime: b.pickupTime || null })),
   }));
 
   res.json(result);
@@ -186,7 +188,7 @@ router.get("/trips", async (req, res) => {
 // ── POST /host/trip ───────────────────────────────────────────────────────────
 
 router.post("/trip", async (req, res) => {
-  const { hostPhone, routeId, fromName, toName, departureTime, tripDate, totalSeats, totalCostInr, rideMode = "MIXED" } = req.body;
+  const { hostPhone, routeId, fromName, toName, departureTime, tripDate, totalSeats, totalCostInr, rideMode = "MIXED", stops = [] } = req.body;
   const phone = (hostPhone || "").replace(/^\+/, "");
 
   if (!phone || !departureTime || !tripDate || !totalSeats || !totalCostInr) {
@@ -225,7 +227,7 @@ router.post("/trip", async (req, res) => {
 
   const trip = await prisma.trip.create({
     data: {
-      routeId,
+      routeId:       route.id,
       hostId:        host.id,
       departureTime: departureTime.trim(),
       tripDate:      new Date(tripDate),
@@ -233,9 +235,17 @@ router.post("/trip", async (req, res) => {
       seatsLeft:     parseInt(totalSeats),
       priceInr,
       status:        "OPEN",
-      rideMode:      ["MIXED", "WOMEN_ONLY"].includes(rideMode) ? rideMode : "MIXED",
+      rideMode:      "MIXED",
+      stops: stops.length > 0 ? {
+        create: stops
+          .filter(s => s.name && s.estimatedTime)
+          .map((s, i) => ({ name: s.name.trim(), estimatedTime: s.estimatedTime.trim(), order: i + 1 })),
+      } : undefined,
     },
-    include: { route: { select: { fromName: true, toName: true } } },
+    include: {
+      route: { select: { fromName: true, toName: true } },
+      stops: { orderBy: { order: "asc" } },
+    },
   });
 
   res.json({
@@ -247,6 +257,7 @@ router.post("/trip", async (req, res) => {
     totalSeats:    trip.totalSeats,
     priceInr:      trip.priceInr,
     status:        trip.status,
+    stops:         trip.stops.map(s => ({ name: s.name, estimatedTime: s.estimatedTime, order: s.order })),
   });
 });
 

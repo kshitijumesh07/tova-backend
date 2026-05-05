@@ -140,6 +140,8 @@ router.get("/bookings", async (req, res) => {
     amountInr:   Math.round(b.amount / 100),
     createdAt:   b.createdAt,
     confirmedAt: b.confirmedAt,
+    pickupStop:  b.pickup     || null,
+    pickupTime:  b.pickupTime || null,
     trip: b.trip
       ? {
           tripDate:      b.trip.tripDate,
