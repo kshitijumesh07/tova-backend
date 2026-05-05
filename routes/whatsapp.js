@@ -386,10 +386,95 @@ router.post("/incoming", async (req, res) => {
       reply = `📋 *Your latest booking*\n\n🚗 ${line}\nStatus: ✅ Confirmed\nOrder: ${booking.orderId}\n\nType *cancel* to cancel and request a refund, or *hi* to book another ride.`;
     }
 
+  // ── Host trip-day commands ────────────────────────────────────────────────
+  // "on my way", "arrived", "late 10" — notify riders of today's active trip
+
+  } else if (lower === "on my way" || lower === "onmyway" || lower === "on the way") {
+    const host = await prisma.host.findUnique({ where: { phone } });
+    if (!host) {
+      reply = "This command is for hosts only. Type *hi* to book a ride.";
+    } else {
+      const todayStart = new Date(); todayStart.setUTCHours(0, 0, 0, 0);
+      const todayEnd   = new Date(); todayEnd.setUTCHours(23, 59, 59, 999);
+      const trip = await prisma.trip.findFirst({
+        where: { hostId: host.id, status: "OPEN", tripDate: { gte: todayStart, lte: todayEnd } },
+        include: {
+          bookings: { where: { status: "CONFIRMED" }, select: { phone: true } },
+          route:    { select: { fromName: true, toName: true } },
+        },
+        orderBy: { departureTime: "asc" },
+      });
+      if (!trip) {
+        reply = "No active trip found for today. Create one at gotova.in/host";
+      } else {
+        trip.bookings.forEach(b => {
+          notifyUser(b.phone,
+            `🚗 *Your TOVA ride is on the way!*\n\nYour host ${host.name} has left and is heading to your pickup point.\n\nTrip: ${trip.route.fromName} → ${trip.route.toName} · ${trip.departureTime}\n\nPlease be ready at your pickup location.`
+          ).catch(() => {});
+        });
+        reply = `✅ Riders notified — on your way!\n\n${trip.bookings.length} rider${trip.bookings.length !== 1 ? "s" : ""} alerted for ${trip.route.fromName} → ${trip.route.toName} · ${trip.departureTime}`;
+      }
+    }
+
+  } else if (lower === "arrived") {
+    const host = await prisma.host.findUnique({ where: { phone } });
+    if (!host) {
+      reply = "This command is for hosts only. Type *hi* to book a ride.";
+    } else {
+      const todayStart = new Date(); todayStart.setUTCHours(0, 0, 0, 0);
+      const todayEnd   = new Date(); todayEnd.setUTCHours(23, 59, 59, 999);
+      const trip = await prisma.trip.findFirst({
+        where: { hostId: host.id, status: "OPEN", tripDate: { gte: todayStart, lte: todayEnd } },
+        include: {
+          bookings: { where: { status: "CONFIRMED" }, select: { phone: true } },
+          route:    { select: { fromName: true, toName: true } },
+        },
+        orderBy: { departureTime: "asc" },
+      });
+      if (!trip) {
+        reply = "No active trip found for today. Create one at gotova.in/host";
+      } else {
+        trip.bookings.forEach(b => {
+          notifyUser(b.phone,
+            `📍 *Your TOVA host has arrived!*\n\nYour host ${host.name} is at your pickup point now.\n\nTrip: ${trip.route.fromName} → ${trip.route.toName} · ${trip.departureTime}\n\nPlease board the vehicle now.`
+          ).catch(() => {});
+        });
+        reply = `✅ Riders notified — arrived!\n\n${trip.bookings.length} rider${trip.bookings.length !== 1 ? "s" : ""} alerted.`;
+      }
+    }
+
+  } else if (lower.startsWith("late")) {
+    const host = await prisma.host.findUnique({ where: { phone } });
+    if (!host) {
+      reply = "This command is for hosts only. Type *hi* to book a ride.";
+    } else {
+      const mins = parseInt(lower.replace(/[^0-9]/g, "")) || 10;
+      const todayStart = new Date(); todayStart.setUTCHours(0, 0, 0, 0);
+      const todayEnd   = new Date(); todayEnd.setUTCHours(23, 59, 59, 999);
+      const trip = await prisma.trip.findFirst({
+        where: { hostId: host.id, status: "OPEN", tripDate: { gte: todayStart, lte: todayEnd } },
+        include: {
+          bookings: { where: { status: "CONFIRMED" }, select: { phone: true } },
+          route:    { select: { fromName: true, toName: true } },
+        },
+        orderBy: { departureTime: "asc" },
+      });
+      if (!trip) {
+        reply = "No active trip found for today. Create one at gotova.in/host";
+      } else {
+        trip.bookings.forEach(b => {
+          notifyUser(b.phone,
+            `⏱ *TOVA ride update — running late*\n\nYour host ${host.name} is running approximately *${mins} minutes late*.\n\nTrip: ${trip.route.fromName} → ${trip.route.toName} · ${trip.departureTime}\n\nSorry for the delay — please stay near your pickup point.`
+          ).catch(() => {});
+        });
+        reply = `✅ Riders notified — running ${mins} min late!\n\n${trip.bookings.length} rider${trip.bookings.length !== 1 ? "s" : ""} alerted.`;
+      }
+    }
+
   // ── Help ─────────────────────────────────────────────────────────────────
 
   } else if (lower === "help" || lower === "commands" || lower === "?") {
-    reply = `👋 *TOVA Commands*\n\n*hi* — Book a new ride\n*host* — Register as a ride host\n*verify* — Submit your govt ID for verification\n*status* — Check your current booking\n*cancel* — Cancel and request a refund\n*help* — Show this list\n\nFor support: https://wa.me/917842957070`;
+    reply = `👋 *TOVA Commands*\n\n*hi* — Book a new ride\n*status* — Check your current booking\n*cancel* — Cancel and request a refund\n*verify* — Submit govt ID for verification\n*host* — Register as a ride host\n\n*For hosts (trip day):*\n*on my way* — Alert riders you've departed\n*arrived* — Alert riders you're at pickup\n*late 10* — Alert riders you're 10 min late\n\n*help* — Show this list\n\nSupport: https://wa.me/917842957070`;
 
   // ── Fallback ─────────────────────────────────────────────────────────────
 
