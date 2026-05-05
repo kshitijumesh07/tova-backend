@@ -213,4 +213,60 @@ router.post("/rebook", async (req, res) => {
   });
 });
 
+// ── DELETE /rider/account ─────────────────────────────────────────────────────
+// Body: { phone }
+// Checks for pending bookings/charges before allowing deletion.
+// Soft-deletes: anonymises personal data, retains booking records for 3 years.
+
+router.delete("/account", async (req, res) => {
+  const phone = (req.body.phone || "").replace(/^\+/, "");
+  if (!phone) return res.status(400).json({ error: "phone required" });
+
+  const user = await prisma.user.findUnique({ where: { phone } });
+  if (!user) return res.status(404).json({ error: "Account not found" });
+  if (user.deletedAt) return res.status(410).json({ error: "Account already deleted" });
+
+  // Check for upcoming confirmed bookings
+  const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+  const pendingBookings = await prisma.booking.findMany({
+    where: {
+      phone,
+      status: "CONFIRMED",
+      trip: { tripDate: { gte: today } },
+    },
+    include: { trip: { include: { route: { select: { fromName: true, toName: true } } } } },
+    take: 10,
+  });
+
+  if (pendingBookings.length > 0) {
+    return res.status(409).json({
+      error: "You have upcoming confirmed bookings. Please cancel them before deleting your account.",
+      pendingBookings: pendingBookings.map(b => ({
+        tripDate:      b.trip?.tripDate,
+        route:         b.trip?.route ? `${b.trip.route.fromName} → ${b.trip.route.toName}` : "Unknown",
+        departureTime: b.trip?.departureTime,
+        amountInr:     Math.round(b.amount / 100),
+      })),
+    });
+  }
+
+  // Soft-delete: anonymise personal data, retain booking records
+  await prisma.user.update({
+    where: { phone },
+    data: {
+      name:              "Deleted User",
+      govtIdType:        null,
+      govtIdNumber:      null,
+      govtDepartment:    null,
+      govtRole:          null,
+      verificationNotes: null,
+      tags:              [],
+      deletedAt:         new Date(),
+    },
+  });
+
+  console.log("[rider] account deleted:", phone);
+  res.json({ ok: true, message: "Account deleted. Your personal data has been removed." });
+});
+
 module.exports = router;

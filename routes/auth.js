@@ -56,8 +56,12 @@ router.post("/verify-otp", async (req, res) => {
 
     const [host, user] = await Promise.all([
       prisma.host.findUnique({ where: { phone }, select: { phone: true, name: true, vehicle: true } }),
-      prisma.user.findUnique({ where: { phone }, select: { phone: true, name: true } }),
+      prisma.user.findUnique({ where: { phone }, select: { phone: true, name: true, deletedAt: true } }),
     ]);
+
+    if (user?.deletedAt) {
+      return res.status(403).json({ error: "This account has been deleted. Contact support on WhatsApp if this is an error." });
+    }
 
     const isNew = !host && !user;
 

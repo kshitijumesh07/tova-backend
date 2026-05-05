@@ -69,6 +69,7 @@ model User {
   verificationNotes  String?
   tags               String[]  @default([])
   createdAt          DateTime  @default(now())
+  deletedAt          DateTime?
   bookings           Booking[]
 }
 
