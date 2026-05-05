@@ -13,8 +13,10 @@ router.post("/request-otp", async (req, res) => {
   const phone = (req.body.phone || "").replace(/^\+/, "");
   if (!phone) return res.status(400).json({ error: "phone required" });
 
+  const testMode = process.env.OTP_TEST_MODE === "true";
+
   try {
-    if (!(await checkOtpRateLimit(phone))) {
+    if (!testMode && !(await checkOtpRateLimit(phone))) {
       return res.status(429).json({ error: "Too many OTP requests. Try again in 10 minutes." });
     }
 
@@ -25,7 +27,6 @@ router.post("/request-otp", async (req, res) => {
     console.log("[auth] OTP sent to", phone, "| code:", otp);
 
     // In test mode, return OTP in response so login works without WhatsApp
-    const testMode = process.env.OTP_TEST_MODE === "true";
     res.json({ sent: true, ...(testMode ? { otp } : {}) });
   } catch (err) {
     console.error("[auth] request-otp:", err.message);
