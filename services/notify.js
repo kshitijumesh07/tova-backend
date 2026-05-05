@@ -33,12 +33,6 @@ async function sendOtp(phone, otp) {
               type:       "body",
               parameters: [{ type: "text", text: otp }],
             },
-            {
-              type:       "button",
-              sub_type:   "COPY_CODE",
-              index:      "0",
-              parameters: [{ type: "coupon_code", coupon_code: otp }],
-            },
           ],
         },
       }),
