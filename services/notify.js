@@ -26,12 +26,20 @@ async function sendOtp(phone, otp) {
         to,
         type: "template",
         template: {
-          name:     "tova_otp",
+          name:     "tova_otp_code",
           language: { code: "en" },
-          components: [{
-            type:       "body",
-            parameters: [{ type: "text", text: otp }],
-          }],
+          components: [
+            {
+              type:       "body",
+              parameters: [{ type: "text", text: otp }],
+            },
+            {
+              type:       "button",
+              sub_type:   "COPY_CODE",
+              index:      "0",
+              parameters: [{ type: "coupon_code", coupon_code: otp }],
+            },
+          ],
         },
       }),
     });

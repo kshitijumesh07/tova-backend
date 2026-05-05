@@ -17,18 +17,21 @@ async function createTemplate() {
       "Authorization": `Bearer ${TOKEN}`,
     },
     body: JSON.stringify({
-      name:      "tova_otp",
+      name:      "tova_otp_code",
       language:  "en",
       category:  "AUTHENTICATION",
       components: [
         {
-          type: "BODY",
-          text: "{{1}} is your TOVA verification code. Valid for 5 minutes. Do not share this with anyone.",
-          example: { body_text: [["123456"]] },
+          type:                        "BODY",
+          add_security_recommendation: true,
         },
         {
-          type:    "FOOTER",
-          text:    "This code expires in 5 minutes.",
+          type:                   "FOOTER",
+          code_expiration_minutes: 5,
+        },
+        {
+          type:    "BUTTONS",
+          buttons: [{ type: "OTP", otp_type: "COPY_CODE", text: "Copy Code" }],
         },
       ],
     }),
