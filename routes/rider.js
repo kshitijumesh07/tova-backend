@@ -113,6 +113,22 @@ router.get("/profile", async (req, res) => {
   }
 });
 
+// ── PATCH /rider/profile ──────────────────────────────────────────────────────
+
+router.patch("/profile", async (req, res) => {
+  const phone = (req.body.phone || "").replace(/^\+/, "");
+  const name  = (req.body.name  || "").trim();
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  if (!name)  return res.status(400).json({ error: "name required" });
+
+  const user = await prisma.user.findUnique({ where: { phone } });
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  await prisma.user.update({ where: { phone }, data: { name } });
+  console.log("[rider] name updated:", phone, "→", name);
+  res.json({ ok: true, name });
+});
+
 // ── GET /rider/bookings?phone= ────────────────────────────────────────────────
 
 router.get("/bookings", async (req, res) => {
