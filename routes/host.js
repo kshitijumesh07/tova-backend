@@ -142,7 +142,7 @@ router.get("/routes", async (req, res) => {
   res.json(routes);
 });
 
-// ── GET /host/trips?phone=&date= ──────────────────────────────────────────────
+// ── GET /host/trips?phone=&date= (or ?upcoming=true for all future trips) ─────
 
 router.get("/trips", async (req, res) => {
   const phone = (req.query.phone || "").replace(/^\+/, "");
@@ -151,11 +151,19 @@ router.get("/trips", async (req, res) => {
   const host = await prisma.host.findUnique({ where: { phone } });
   if (!host) return res.status(404).json({ error: "Host not found" });
 
-  const dateParam = req.query.date ? new Date(req.query.date) : new Date();
-  const { start, end } = dayBounds(dateParam);
+  let where;
+  if (req.query.upcoming === "true") {
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    where = { hostId: host.id, tripDate: { gte: todayStart } };
+  } else {
+    const dateParam = req.query.date ? new Date(req.query.date) : new Date();
+    const { start, end } = dayBounds(dateParam);
+    where = { hostId: host.id, tripDate: { gte: start, lte: end } };
+  }
 
   const trips = await prisma.trip.findMany({
-    where:   { hostId: host.id, tripDate: { gte: start, lte: end } },
+    where,
     include: {
       route:    { select: { fromName: true, toName: true } },
       stops:    { orderBy: { order: "asc" } },
@@ -164,7 +172,7 @@ router.get("/trips", async (req, res) => {
         select: { id: true, phone: true, pickup: true, pickupTime: true, user: { select: { name: true } } },
       },
     },
-    orderBy: { departureTime: "asc" },
+    orderBy: [{ tripDate: "asc" }, { departureTime: "asc" }],
   });
 
   const result = trips.map((t) => ({
